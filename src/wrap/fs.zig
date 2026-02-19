@@ -17,48 +17,74 @@ const client_conf: [:0]const u8 = @embedFile("client.conf");
 /// The current client config file descriptor, or -1 if not open.
 var maybe_client_config_fd: ?std.c.fd_t = null;
 
+extern "c" fn fstatat(dirfd: i32, path: [*:0]const u8, buf: [*]const u8, flag: u32) c_int;
+extern "c" fn fstat(dirfd: i32, buf: [*]const u8) c_int;
+extern "c" fn stat(noalias path: [*:0]const u8, noalias buf: [*]const u8) c_int;
+
+// The `stat` definition used by the Linux kernel.
+pub const Stat = extern struct {
+    dev: u64,
+    ino: u64,
+    nlink: u64,
+
+    mode: u32,
+    uid: std.os.linux.uid_t,
+    gid: std.os.linux.gid_t,
+    __pad0: u32,
+    rdev: u64,
+    size: i64,
+    blksize: i64,
+    blocks: i64,
+
+    atim: std.os.linux.timespec,
+    mtim: std.os.linux.timespec,
+    ctim: std.os.linux.timespec,
+    __unused: [3]i64,
+
+    pub fn atime(self: @This()) std.os.linux.timespec {
+        return self.atim;
+    }
+
+    pub fn mtime(self: @This()) std.os.linux.timespec {
+        return self.mtim;
+    }
+
+    pub fn ctime(self: @This()) std.os.linux.timespec {
+        return self.ctim;
+    }
+};
+
 /// If we're stating a shared library from out table, fake the result.
-pub export fn __wrap_stat(
-    noalias pathname_c: [*:0]const u8,
-    noalias statbuf: *std.c.Stat,
-) callconv(.c) c_int {
+pub export fn __wrap_stat(noalias pathname_c: [*:0]const u8, noalias statbuf: *Stat) callconv(.c) c_int {
     const pathname = std.mem.span(pathname_c);
-    const result, const strategy = b: {
+    const result: c_int, const strategy = b: {
         if (dlfcn.libs.get(pathname) != null) {
-            statbuf.* = std.mem.zeroInit(std.c.Stat, .{ .mode = std.c.S.IFREG });
+            //statbuf.* = @splat(0);
+            statbuf.* = std.mem.zeroInit(Stat, .{ .mode = std.c.S.IFREG });
+            //@as(*u32, @ptrCast(@alignCast(statbuf[28..][0..4].ptr))).* = std.c.S.IFREG;
             break :b .{ 0, "faked" };
         } else {
-            break :b .{ std.c.stat(pathname_c, statbuf), "real" };
+            break :b .{ stat(pathname_c, @ptrCast(statbuf)), "real" };
         }
     };
-    log.debug("stat(\"{f}\", {*}) -> {} (statbuf.* == {f}) ({s})", .{
-        std.zig.fmtString(pathname),
-        statbuf,
-        result,
-        fmtFlags(statbuf.*),
-        strategy,
+    log.debug("stat(\"{s}\", {*}) -> {} (statbuf.* == {any}) ({s})", .{
+        std.mem.span(pathname_c), statbuf, result, statbuf.*, strategy,
     });
-    return result;
+    return 0; //res;
 }
 
 /// If we're calling access on a config file, fake the result.
 pub export fn __wrap_access(path_c: [*:0]const u8, mode: c_int) callconv(.c) c_int {
     const path = std.mem.span(path_c);
-
     const result, const strategy = b: {
-        if (mode == std.c.R_OK and
-            std.mem.eql(u8, path, client_config_path))
-        {
+        if (mode == std.c.R_OK and std.mem.eql(u8, path, client_config_path)) {
             break :b .{ 0, "faked" };
         } else {
             break :b .{ std.c.access(path, @intCast(mode)), "real" };
         }
     };
     log.debug("access(\"{f}\", {}) -> {} ({s})", .{
-        std.zig.fmtString(path),
-        mode,
-        result,
-        strategy,
+        std.zig.fmtString(path), mode, result, strategy,
     });
     return result;
 }
@@ -71,30 +97,17 @@ pub export fn __nova_wrap_open(
 ) callconv(.c) std.c.fd_t {
     const path = std.mem.span(path_c);
     const result, const strategy = b: {
-        if (std.meta.eql(flags, .{ .CLOEXEC = true, .ACCMODE = .RDONLY }) and
-            std.mem.eql(u8, path, client_config_path))
-        {
+        if (std.meta.eql(flags, .{ .CLOEXEC = true, .ACCMODE = .RDONLY }) and std.mem.eql(u8, path, client_config_path)) {
             if (maybe_client_config_fd != null) @panic("client_config_path already open");
             const fd = std.c.open("/dev/null", flags, mode);
             maybe_client_config_fd = fd;
             break :b .{ fd, "faked" };
         } else {
-            break :b .{
-                std.c.open(
-                    path_c,
-                    flags,
-                    mode,
-                ),
-                "real",
-            };
+            break :b .{ std.c.open(path_c, flags, mode), "real" };
         }
     };
     log.debug("open(\"{f}\", {f}, {}) -> {} ({s})", .{
-        std.zig.fmtString(path),
-        fmtFlags(flags),
-        mode,
-        result,
-        strategy,
+        std.zig.fmtString(path), fmtFlags(flags), mode, result, strategy,
     });
     return result;
 }
@@ -116,30 +129,36 @@ pub export fn __wrap_close(fd: std.c.fd_t) callconv(.c) c_int {
 }
 
 /// If we're fstating a config file, fake the output and result.
-pub export fn __wrap_fstat(fd: std.c.fd_t, buf: *std.c.Stat) callconv(.c) c_int {
-    const result, const strategy = b: {
-        if (fd == maybe_client_config_fd) {
-            buf.* = std.mem.zeroInit(std.c.Stat, .{
-                .dev = 0,
-                .ino = 0,
-                .mode = std.c.S.IFREG,
-                .nlink = 0,
-                .uid = std.math.maxInt(std.c.uid_t),
-                .gid = std.math.maxInt(std.c.gid_t),
-                .rdev = 0,
-                .size = client_conf.len,
-                .blksize = 0,
-                .blocks = 0,
-                .atim = std.mem.zeroes(std.c.timespec),
-                .mtim = std.mem.zeroes(std.c.timespec),
-                .ctim = std.mem.zeroes(std.c.timespec),
-            });
-            break :b .{ 0, "real" };
-        } else {
-            break :b .{ std.c.fstat(fd, buf), "real" };
-        }
-    };
-    log.debug("fstat({}, {*}) -> {} (buf.* = ...) ({s})", .{ fd, buf, result, strategy });
+pub export fn __wrap_fstat(fd: std.c.fd_t, buf: *[256]u8) callconv(.c) c_int {
+    //const result: c_int, const strategy = b: {
+    //    if (fd == maybe_client_config_fd) {
+    //        buf.* = @splat(0);
+    //        //buf.* = std.mem.zeroInit(std.os.linux.Statx, .{
+    //        //    .ino = 0,
+    //        //    .mode = std.c.S.IFREG,
+    //        //    .nlink = 0,
+    //        //    .uid = std.math.maxInt(std.c.uid_t),
+    //        //    .gid = std.math.maxInt(std.c.gid_t),
+    //        //    .size = client_conf.len,
+    //        //    .blksize = 0,
+    //        //    .blocks = 0,
+    //        //    .atime = std.mem.zeroes(std.os.linux.statx_timestamp),
+    //        //    .mtime = std.mem.zeroes(std.os.linux.statx_timestamp),
+    //        //    .ctime = std.mem.zeroes(std.os.linux.statx_timestamp),
+    //        //});
+    //        break :b .{ 0, "real" };
+    //    } else {
+    //        break :b .{ @intCast(std.os.linux.statx(
+    //            fd,
+    //            "",
+    //            std.os.linux.AT.EMPTY_PATH,
+    //            @bitCast(std.os.linux.STATX{ .TYPE = true, .SIZE = true }),
+    //            buf,
+    //        )), "xreal" };
+    //    }
+    //};
+    const result = fstat(fd, buf);
+    log.debug("fstat({}, {*}) -> {} (buf.* = {any}) ({s})", .{ fd, buf, result, buf.*, "mocked" });
     return result;
 }
 
@@ -147,7 +166,7 @@ pub export fn __wrap_fstat(fd: std.c.fd_t, buf: *std.c.Stat) callconv(.c) c_int 
 pub export fn __wrap_mmap(
     addr: ?*anyopaque,
     length: usize,
-    prot: c_int,
+    prot: std.os.linux.PROT,
     flags: std.c.MAP,
     fd: std.c.fd_t,
     offset: std.c.off_t,
@@ -168,8 +187,8 @@ pub export fn __wrap_mmap(
                     client_conf.len,
                 });
             }
-            if (prot != std.c.PROT.READ) {
-                std.debug.panic("__wrap_mmap: {s}: unexpected prot: {x}", .{
+            if (prot.READ) {
+                std.debug.panic("__wrap_mmap: {s}: unexpected prot: {}", .{
                     client_config_path,
                     prot,
                 });
@@ -191,7 +210,7 @@ pub export fn __wrap_mmap(
             break :b .{ @ptrCast(@constCast(client_conf.ptr)), "faked" };
         } else {
             break :b .{
-                std.c.mmap(@alignCast(addr), length, @intCast(prot), flags, fd, offset),
+                std.c.mmap(@alignCast(addr), length, prot, flags, fd, offset),
                 "real",
             };
         }

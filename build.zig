@@ -52,13 +52,13 @@ pub fn build(b: *std.Build) void {
 
     {
         // Add the varargs workaround
-        libpipewire.addCSourceFile(.{
+        libpipewire.root_module.addCSourceFile(.{
             .file = b.path("src/wrap/va.c"),
             .flags = va_flags,
         });
 
         // Add the source files
-        libpipewire.addCSourceFiles(.{
+        libpipewire.root_module.addCSourceFiles(.{
             .root = upstream.path("src/pipewire"),
             .files = &.{
                 "buffers.c",
@@ -341,8 +341,8 @@ pub fn build(b: *std.Build) void {
                         .link_libc = true,
                     }),
                 });
-                dump_coeffs_exe.addIncludePath(upstream.path("spa/include"));
-                dump_coeffs_exe.addCSourceFiles(.{
+                dump_coeffs_exe.root_module.addIncludePath(upstream.path("spa/include"));
+                dump_coeffs_exe.root_module.addCSourceFiles(.{
                     .root = upstream.path("spa/plugins/audioconvert"),
                     .files = &.{
                         "resample-native.c",
@@ -356,13 +356,13 @@ pub fn build(b: *std.Build) void {
                 for (resampler_precomp_tuples) |tuple| {
                     dump_coeffs.addArgs(&.{ "-t", tuple });
                 }
-                const resample_native_precomp_h = dump_coeffs.captureStdOut();
+                const resample_native_precomp_h = dump_coeffs.captureStdOut(.{});
                 const write_coeffs = b.addWriteFiles();
                 _ = write_coeffs.addCopyFile(
                     resample_native_precomp_h,
                     "resample-native-precomp.h",
                 );
-                audioconvert.addIncludePath(write_coeffs.getDirectory());
+                audioconvert.root_module.addIncludePath(write_coeffs.getDirectory());
             }
 
             _ = PipewireModule.build(b, pm_ctx, .{
@@ -435,11 +435,11 @@ pub fn build(b: *std.Build) void {
 
         // Include and install the library headers
         {
-            libpipewire.addIncludePath(b.dependency("valgrind_h", .{}).path(""));
-            libpipewire.addIncludePath(upstream.path("spa/include"));
-            libpipewire.addIncludePath(upstream.path("src"));
-            libpipewire.addConfigHeader(version_h);
-            libpipewire.addConfigHeader(config_h);
+            libpipewire.root_module.addIncludePath(b.dependency("valgrind_h", .{}).path(""));
+            libpipewire.root_module.addIncludePath(upstream.path("spa/include"));
+            libpipewire.root_module.addIncludePath(upstream.path("src"));
+            libpipewire.root_module.addConfigHeader(version_h);
+            libpipewire.root_module.addConfigHeader(config_h);
 
             libpipewire.installHeadersDirectory(upstream.path("src/pipewire"), "pipewire", .{});
             libpipewire.installHeadersDirectory(upstream.path("spa/include/spa"), "spa", .{});
@@ -479,77 +479,77 @@ pub fn build(b: *std.Build) void {
     libpipewire_zig.addIncludePath(upstream.path("spa/include"));
 
     // Build the video play example.
-    {
-        const zin = b.dependency("zin", .{}).module("zin");
+    //{
+    //    const zin = b.dependency("zin", .{}).module("zin");
 
-        const video_play = b.addExecutable(.{
-            .name = "video-play",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/examples/video_play.zig"),
-                .target = target,
-                .optimize = optimize,
-                .imports = &.{
-                    .{ .name = "zin", .module = zin },
-                },
-            }),
-        });
+    //    const video_play = b.addExecutable(.{
+    //        .name = "video-play",
+    //        .root_module = b.createModule(.{
+    //            .root_source_file = b.path("src/examples/video_play.zig"),
+    //            .target = target,
+    //            .optimize = optimize,
+    //            .imports = &.{
+    //                .{ .name = "zin", .module = zin },
+    //            },
+    //        }),
+    //    });
 
-        if (use_zig_module) {
-            video_play.root_module.addImport("pipewire", libpipewire_zig);
-        } else {
-            video_play.linkLibrary(libpipewire);
-            video_play.root_module.addImport("pipewire", c);
-        }
+    //    if (use_zig_module) {
+    //        video_play.root_module.addImport("pipewire", libpipewire_zig);
+    //    } else {
+    //        video_play.linkLibrary(libpipewire);
+    //        video_play.root_module.addImport("pipewire", c);
+    //    }
 
-        video_play.root_module.addOptions("example_options", example_options);
+    //    video_play.root_module.addOptions("example_options", example_options);
 
-        b.installArtifact(video_play);
+    //    b.installArtifact(video_play);
 
-        const run_step = b.step("video-play", "Run the video-play example");
+    //    const run_step = b.step("video-play", "Run the video-play example");
 
-        const run_cmd = b.addRunArtifact(video_play);
-        run_step.dependOn(&run_cmd.step);
+    //    const run_cmd = b.addRunArtifact(video_play);
+    //    run_step.dependOn(&run_cmd.step);
 
-        run_cmd.step.dependOn(b.getInstallStep());
+    //    run_cmd.step.dependOn(b.getInstallStep());
 
-        if (b.args) |args| {
-            run_cmd.addArgs(args);
-        }
-    }
+    //    if (b.args) |args| {
+    //        run_cmd.addArgs(args);
+    //    }
+    //}
 
     // Build the audio src example.
-    {
-        const audio_src = b.addExecutable(.{
-            .name = "audio-src",
-            .root_module = b.createModule(.{
-                .root_source_file = b.path("src/examples/audio_src.zig"),
-                .target = target,
-                .optimize = optimize,
-            }),
-        });
+    //{
+    //    const audio_src = b.addExecutable(.{
+    //        .name = "audio-src",
+    //        .root_module = b.createModule(.{
+    //            .root_source_file = b.path("src/examples/audio_src.zig"),
+    //            .target = target,
+    //            .optimize = optimize,
+    //        }),
+    //    });
 
-        if (use_zig_module) {
-            audio_src.root_module.addImport("pipewire", libpipewire_zig);
-        } else {
-            audio_src.linkLibrary(libpipewire);
-            audio_src.root_module.addImport("pipewire", c);
-        }
+    //    if (use_zig_module) {
+    //        audio_src.root_module.addImport("pipewire", libpipewire_zig);
+    //    } else {
+    //        audio_src.root_module.linkLibrary(libpipewire);
+    //        audio_src.root_module.addImport("pipewire", c);
+    //    }
 
-        audio_src.root_module.addOptions("example_options", example_options);
+    //    audio_src.root_module.addOptions("example_options", example_options);
 
-        b.installArtifact(audio_src);
+    //    b.installArtifact(audio_src);
 
-        const run_step = b.step("audio-src", "Run the audio-src example");
+    //    const run_step = b.step("audio-src", "Run the audio-src example");
 
-        const run_cmd = b.addRunArtifact(audio_src);
-        run_step.dependOn(&run_cmd.step);
+    //    const run_cmd = b.addRunArtifact(audio_src);
+    //    run_step.dependOn(&run_cmd.step);
 
-        run_cmd.step.dependOn(b.getInstallStep());
+    //    run_cmd.step.dependOn(b.getInstallStep());
 
-        if (b.args) |args| {
-            run_cmd.addArgs(args);
-        }
-    }
+    //    if (b.args) |args| {
+    //        run_cmd.addArgs(args);
+    //    }
+    //}
 }
 
 /// Flags used for the vararg wrapper.
@@ -633,21 +633,21 @@ pub const PipewireModule = struct {
                 .sanitize_c = .off, // https://github.com/allyourcodebase/pipewire/issues/3
             }),
         });
-        lib.addCSourceFiles(.{
+        lib.root_module.addCSourceFiles(.{
             .root = ctx.upstream.path("src/modules"),
             .files = self.files,
             .flags = flags,
         });
-        lib.addIncludePath(ctx.upstream.path("spa/include"));
-        lib.addIncludePath(ctx.upstream.path("src"));
-        lib.addConfigHeader(ctx.version);
-        lib.addConfigHeader(ctx.config);
+        lib.root_module.addIncludePath(ctx.upstream.path("spa/include"));
+        lib.root_module.addIncludePath(ctx.upstream.path("src"));
+        lib.root_module.addConfigHeader(ctx.version);
+        lib.root_module.addConfigHeader(ctx.config);
 
         namespace(lib, "pipewire__module_init");
         namespace(lib, "mod_topic");
 
-        ctx.libpipewire.addIncludePath(ctx.upstream.path("spa/include"));
-        ctx.libpipewire.linkLibrary(lib);
+        ctx.libpipewire.root_module.addIncludePath(ctx.upstream.path("spa/include"));
+        ctx.libpipewire.root_module.linkLibrary(lib);
 
         return lib;
     }
@@ -673,7 +673,7 @@ pub const PipewirePlugin = struct {
                 .link_libc = true,
             }),
         });
-        lib.addCSourceFiles(.{
+        lib.root_module.addCSourceFiles(.{
             .root = ctx.upstream.path(b.pathJoin(&.{
                 "spa",
                 "plugins",
@@ -682,14 +682,14 @@ pub const PipewirePlugin = struct {
             .files = self.files,
             .flags = flags,
         });
-        lib.addIncludePath(ctx.upstream.path("spa/include"));
-        lib.addConfigHeader(ctx.config);
+        lib.root_module.addIncludePath(ctx.upstream.path("spa/include"));
+        lib.root_module.addConfigHeader(ctx.config);
 
         namespace(lib, "spa_handle_factory_enum");
         namespace(lib, "spa_log_topic_enum");
 
-        ctx.libpipewire.addIncludePath(ctx.upstream.path("spa/include"));
-        ctx.libpipewire.linkLibrary(lib);
+        ctx.libpipewire.root_module.addIncludePath(ctx.upstream.path("spa/include"));
+        ctx.libpipewire.root_module.linkLibrary(lib);
 
         return lib;
     }
