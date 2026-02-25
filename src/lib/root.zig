@@ -82,7 +82,7 @@ pub const Registry = struct {
     ptr: *c.pw_registry,
 
     pub fn ListenerFn(T: type) type {
-        return *const fn (?*T, u32, u32, ?[:0]const u8, u32, ?*const c.spa_dict) void;
+        return *const fn (?*T, Id, u32, ?[:0]const u8, u32, ?*const c.spa_dict) void;
     }
 
     pub fn addListener(reg: Registry, T: type, comptime func: ListenerFn(T), reg_listener: *c.spa_hook, usrptr: ?*T) !void {
@@ -96,7 +96,7 @@ pub const Registry = struct {
                 props: ?*const c.spa_dict,
             ) callconv(.c) void {
                 @call(.auto, func, .{
-                    @as(?*T, @ptrCast(@alignCast(ptr))), id, permissions, std.mem.span(name orelse ""), version, props,
+                    @as(?*T, @ptrCast(@alignCast(ptr))), @as(Id, @enumFromInt(id)), permissions, std.mem.span(name orelse ""), version, props,
                 });
             }
         };
@@ -113,9 +113,47 @@ pub const Registry = struct {
     }
 };
 
+pub const Properties = struct {
+    ptr: *c.pw_properties,
+    pub fn init(comptime kv: []const [*:0]const u8) !Properties {
+        //const len = comptime std.mem.span(key_values).len;
+        comptime std.debug.assert(kv.len & 1 == 0);
+        //const Args = @Tuple([kv.len:null]?[*:0]const u8;
+        var args: @Tuple(&@as([7]type, @splat(?[*:0]const u8))) = undefined;
+        inline for (kv, 0..) |src, i| {
+            args[i] = src;
+            std.debug.print("{*} {s}\n", .{ src, std.mem.span(src) });
+        } else args[kv.len] = null;
+        const props: ?*c.pw_properties = @call(.auto, c.pw_properties_new, args);
+        return .{ .ptr = props orelse return error.UnableToCReateProperties };
+    }
+};
+
+pub const SimplePlugin = struct {
+    pub const Dict = extern struct {
+        flags: u32,
+        count: u32,
+        items: [*]Item,
+
+        pub const Item = extern struct {
+            key: [*]const u8,
+            value: [*]const u8,
+        };
+    };
+
+    pub const POD = PlainOldData;
+    pub const PlainOldData = struct {
+        pub const Builder = struct {};
+    };
+};
+
 pub const Direction = enum(c_uint) { input = c.PW_DIRECTION_INPUT, output = c.PW_DIRECTION_OUTPUT };
 
+pub const Id = enum(u32) { core = 0, client = 1, any = std.math.maxInt(u32), _ };
+
 pub const Stream = struct {
+    ptr: *c.pw_stream,
+
     pub const Flags = packed struct(c_int) {
         AUTOCONNECT: bool = false,
         INACTIVE: bool = false,
@@ -135,17 +173,58 @@ pub const Stream = struct {
         pub const NONE: Flags = .{};
     };
 
+    pub const State = enum(u32) {
+        _,
+    };
+
+    pub fn Events(T: type) type {
+        return struct {
+            version: u32 = c.PW_VERSION_STREAM_EVENTS,
+            destroy: ?*const fn (?*T) void = null,
+            state_changed: ?*const fn (?*T, State, State, ?[*:0]const u8) void = null, // old, new, err
+            control_info: ?*const fn (?*T, u32, *const c.pw_stream_control) void = null, // )(void *data, uint32_t id, const struct pw_stream_control *control)
+            io_changed: ?*const fn (?*T, u32, *anyopaque, u32) void = null, // )(void *data, uint32_t id, void *area, uint32_t size)
+            param_changed: ?*const fn (?*T, Id, *const c.spa_pod) void = null, // )(void *data, uint32_t id, const struct spa_pod *param)
+            add_buffer: ?*const fn (?*T, *c.pw_buffer) void = null, // )(void *data, struct pw_buffer *buffer)
+            remove_buffer: ?*const fn (?*T, *c.pw_buffer) void = null, // )(void *data, struct pw_buffer *buffer)
+            process: ?*const fn (?*T) void = null,
+            drained: ?*const fn (?*T) void = null,
+            command: ?*const fn (?*T, *const c.spa_command) void = null, // )(void *data, const struct spa_command *command)
+            trigger_done: ?*const fn (?*T) void = null, // )(void *data)
+        };
+    }
+
+    pub fn simple(T: type, loop: Loop, name: [:0]const u8, props: Properties, comptime events: Events(T), usrptr: ?*T) !Stream {
+        const CFunc = struct {
+            fn process(ptr: ?*anyopaque) callconv(.c) void {
+                if (comptime events.process) |proc|
+                    @call(.auto, proc, .{@as(?*T, @ptrCast(@alignCast(ptr)))});
+            }
+        };
+
+        return .{
+            .ptr = c.pw_stream_new_simple(loop.ptr, name.ptr, props.ptr, &.{
+                .version = events.version,
+                .process = &CFunc.process,
+            }, usrptr) orelse return error.UnableToAddSimpleStream,
+        };
+    }
+
+    pub fn raze(stream: Stream) void {
+        c.pw_stream_destroy(stream.ptr);
+    }
+
     pub fn connect(
-        stream: ?*c.struct_pw_stream,
+        stream: Stream,
         direction: Direction,
-        target_id: u32,
+        target_id: Id,
         flags: Flags,
         params: []const *const c.struct_spa_pod,
     ) !void {
         if (c.pw_stream_connect(
-            stream,
+            stream.ptr,
             @intFromEnum(direction),
-            target_id,
+            @intFromEnum(target_id),
             @bitCast(flags),
             @ptrCast(@constCast(params.ptr)),
             @truncate(params.len),
