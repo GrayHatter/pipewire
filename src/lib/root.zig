@@ -354,7 +354,6 @@ pub const Properties = struct {
         var args: @Tuple(&@as([7]type, @splat(?[*:0]const u8))) = undefined;
         inline for (kv, 0..) |src, i| {
             args[i] = src;
-            std.debug.print("{*} {s}\n", .{ src, std.mem.span(src) });
         } else args[kv.len] = null;
         const props: ?*c.pw_properties = @call(.auto, c.pw_properties_new, args);
         return .{ .ptr = props orelse return error.UnableToCReateProperties };
@@ -372,8 +371,6 @@ pub const SimplePlugin = struct {
         };
 
         pub fn fromPw(props: *const c.spa_dict) Dict {
-            if (props.items == null)
-                std.debug.print("{any}\n", .{props});
             return .{
                 .flags = props.flags,
                 .items = if (props.n_items == 0 or props.items == null)
@@ -385,17 +382,43 @@ pub const SimplePlugin = struct {
     };
 
     pub const Param = extern struct {
-        id: u32,
+        id: Param.Id,
         flags: u32,
         user: u32,
         seq: i32,
         padding: [4]u32,
+
+        pub const Id = enum(u32) {
+            invalid = 0,
+            prop_info = 1,
+            props = 2,
+            enum_format = 3,
+            format = 4,
+            buffers = 5,
+            meta = 6,
+            io = 7,
+            enum_profile = 8,
+            profile = 9,
+            enum_port_config = 10,
+            port_config = 11,
+            enum_route = 12,
+            route = 13,
+            control = 14,
+            latency = 15,
+            process_latency = 16,
+            tag = 17,
+            peer_formats = 18,
+        };
     };
 
     pub const POD = PlainOldData;
     pub const PlainOldData = struct {
         pub const Builder = struct {};
     };
+
+    test {
+        _ = &std.testing.refAllDecls(@This());
+    }
 };
 
 pub const Direction = enum(c_uint) {
