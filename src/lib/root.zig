@@ -413,7 +413,136 @@ pub const SimplePlugin = struct {
 
     pub const POD = PlainOldData;
     pub const PlainOldData = struct {
-        pub const Builder = struct {};
+        pub const Frame = struct {};
+
+        const Type = enum(u32) {
+            id = 3,
+            int = 4,
+            object = 15,
+            _,
+        };
+
+        pub const Builder = struct {
+            bytes: []align(8) u8,
+            len: usize = 0,
+
+            pub const Flags = packed struct(u32) {
+                _: u32 = 0,
+
+                pub const none: Flags = .{};
+            };
+
+            pub const Object = struct {
+                builder: *Builder,
+                body: []align(8) u8,
+
+                pub fn append(obj: *Object, prop: u32, flags: Flags, comptime kind: POD.Type, val: anytype) !void {
+                    var buffer: [256]u8 = undefined; // TODO size array correctly
+                    const padding: u32 = 0;
+                    var new: []u8 = &.{};
+                    switch (kind) {
+                        .id => {
+                            std.mem.writeInt(u32, buffer[0..][0..4], prop, .native);
+                            std.mem.writeInt(u32, buffer[4..][0..4], @bitCast(flags), .native);
+                            std.mem.writeInt(u32, buffer[8..][0..4], 4, .native); // size
+                            std.mem.writeInt(u32, buffer[12..][0..4], @intFromEnum(kind), .native);
+                            std.mem.writeInt(u32, buffer[16..][0..4], @bitCast(val), .native);
+                            std.mem.writeInt(u32, buffer[20..][0..4], padding, .native);
+                            new = buffer[0..24];
+                        },
+
+                        .int => {
+                            std.mem.writeInt(u32, buffer[0..][0..4], prop, .native);
+                            std.mem.writeInt(u32, buffer[4..][0..4], @bitCast(flags), .native);
+                            std.mem.writeInt(u32, buffer[8..][0..4], 4, .native); // size
+                            std.mem.writeInt(u32, buffer[12..][0..4], @intFromEnum(kind), .native);
+                            std.mem.writeInt(u32, buffer[16..][0..4], @bitCast(val), .native);
+                            std.mem.writeInt(u32, buffer[20..][0..4], padding, .native);
+                            new = buffer[0..24];
+                        },
+                        .object => unreachable,
+                        _ => unreachable,
+                    }
+
+                    obj.body = try obj.builder.append(obj.body, new);
+                }
+
+                pub fn toPwPod(obj: *Object) *c.spa_pod {
+                    return @ptrCast(obj.body);
+                }
+
+                pub fn toPwPodFrame(obj: *Object) *c.spa_pod_frame {
+                    return @ptrCast(obj.body);
+                }
+            };
+
+            pub fn init(buffer: []align(8) u8) Builder {
+                return .{ .bytes = buffer };
+            }
+
+            pub fn pushObject(build: *Builder, obj_type: u32, obj_id: Param.Id) !Object {
+                std.debug.assert(build.len % 8 == 0);
+                var body: []align(8) u8 = @alignCast(build.bytes[build.len..]);
+                const empty_size = 8;
+                std.mem.writeInt(u32, body[0..][0..4], empty_size, .native);
+                std.mem.writeInt(u32, body[4..][0..4], @intFromEnum(POD.Type.object), .native);
+                std.mem.writeInt(u32, body[8..][0..4], obj_type, .native);
+                std.mem.writeInt(u32, body[12..][0..4], @intFromEnum(obj_id), .native);
+                return .{
+                    .builder = build,
+                    .body = body[0 .. 8 + empty_size],
+                };
+            }
+
+            fn append(build: *Builder, frame: []align(8) u8, new: []const u8) error{NoSpaceLeft}![]align(8) u8 {
+                if (new.len + build.len > build.bytes.len) return error.NoSpaceLeft;
+                const orig_frame_size = std.mem.readInt(u32, frame[0..4], .native);
+                var body: []align(8) u8 = frame;
+                build.len += new.len;
+                body.len += new.len;
+                @memcpy(body[frame.len..], new);
+
+                std.mem.writeInt(u32, body[0..4], @intCast(orig_frame_size + new.len), .native);
+                return body;
+            }
+
+            pub fn pop(build: *Builder) Frame {
+                _ = build;
+                return .{};
+            }
+        };
+
+        test Builder {
+            var c_pod_buffer: [2048]u8 = undefined;
+            var pod_builder: c.spa_pod_builder = .{ .data = &c_pod_buffer, .size = c_pod_buffer.len };
+            var frame: c.spa_pod_frame = undefined;
+            _ = c.spa_pod_builder_push_object(&pod_builder, &frame, c.SPA_TYPE_OBJECT_Format, c.SPA_PARAM_EnumFormat);
+            _ = c.spa_pod_builder_prop(&pod_builder, c.SPA_FORMAT_mediaType, 0);
+            _ = c.spa_pod_builder_id(&pod_builder, c.SPA_MEDIA_TYPE_audio);
+            _ = c.spa_pod_builder_prop(&pod_builder, c.SPA_FORMAT_mediaSubtype, 0);
+            _ = c.spa_pod_builder_id(&pod_builder, c.SPA_MEDIA_SUBTYPE_raw);
+            _ = c.spa_pod_builder_prop(&pod_builder, c.SPA_FORMAT_AUDIO_format, 0);
+            _ = c.spa_pod_builder_id(&pod_builder, c.SPA_AUDIO_FORMAT_F32);
+            _ = c.spa_pod_builder_prop(&pod_builder, c.SPA_FORMAT_AUDIO_rate, 0);
+            _ = c.spa_pod_builder_int(&pod_builder, 48000);
+            _ = c.spa_pod_builder_prop(&pod_builder, c.SPA_FORMAT_AUDIO_channels, 0);
+            _ = c.spa_pod_builder_int(&pod_builder, 2);
+            _ = c.spa_pod_builder_pop(&pod_builder, &frame).?;
+
+            var zig_pod_buffer: [2048]u8 align(8) = undefined;
+            var builder: Builder = .init(&zig_pod_buffer);
+            var zig_frame = try builder.pushObject(c.SPA_TYPE_OBJECT_Format, .enum_format);
+            try zig_frame.append(c.SPA_FORMAT_mediaType, .none, .id, c.SPA_MEDIA_TYPE_audio);
+            try zig_frame.append(c.SPA_FORMAT_mediaSubtype, .none, .id, c.SPA_MEDIA_SUBTYPE_raw);
+            try zig_frame.append(c.SPA_FORMAT_AUDIO_format, .none, .id, c.SPA_AUDIO_FORMAT_F32);
+            try zig_frame.append(c.SPA_FORMAT_AUDIO_rate, .none, .int, @as(u32, 48000));
+            try zig_frame.append(c.SPA_FORMAT_AUDIO_channels, .none, .int, @as(u32, 2));
+
+            try std.testing.expectEqual(&zig_pod_buffer, @as([*]u8, @ptrCast(zig_frame.toPwPod())));
+            try std.testing.expectEqual(c.spa_pod{ .size = 128, .type = 15 }, zig_frame.toPwPod().*);
+
+            try std.testing.expectEqualSlices(u8, &c_pod_buffer, &zig_pod_buffer);
+        }
     };
 
     test {
