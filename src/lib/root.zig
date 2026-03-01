@@ -243,6 +243,7 @@ pub const Registry = struct {
         return switch (target) {
             .client => .{ .client = .{ .ptr = @ptrCast(bind_proxy) } },
             .port => .{ .port = .{ .ptr = @ptrCast(bind_proxy) } },
+            .device => .{ .device = .{ .ptr = @ptrCast(bind_proxy) } },
             else => unreachable, // not implemented,
         };
     }
@@ -271,8 +272,6 @@ pub const Port = struct {
             params: ?*const fn (*T, ?*anyopaque, c_int, u32, u32, u32, [*c]const c.struct_spa_pod) void = null,
         };
     }
-
-    //permissions: ?*const fn (?*anyopaque, u32, u32, [*c]const struct_pw_permission) callconv(.c) void = @import("std").mem.zeroes(?*const fn (?*anyopaque, u32, u32, [*c]const struct_pw_permission) callconv(.c) void),
 
     pub fn addListener(port: Port, T: type, comptime func: PortFn(T), listener: *c.spa_hook, usrptr: *T) !void {
         const CFunc = struct {
@@ -318,15 +317,16 @@ pub const Client = struct {
     };
 
     pub fn ClientFn(T: type) type {
-        return *const fn (*T, Client.Info) void;
+        return struct {
+            info: ?*const fn (*T, Client.Info) void = null,
+            permissions: ?*const fn (*T, Id, []const Permission) void = null,
+        };
     }
-
-    //permissions: ?*const fn (?*anyopaque, u32, u32, [*c]const struct_pw_permission) callconv(.c) void = @import("std").mem.zeroes(?*const fn (?*anyopaque, u32, u32, [*c]const struct_pw_permission) callconv(.c) void),
 
     pub fn addListener(client: Client, T: type, comptime func: ClientFn(T), listener: *c.spa_hook, usrptr: *T) !void {
         const CFunc = struct {
             fn info(ptr: ?*anyopaque, client_info: ?*const c.pw_client_info) callconv(.c) void {
-                @call(.auto, func, .{
+                @call(.auto, func.info.?, .{
                     @as(*T, @ptrCast(@alignCast(ptr))),
                     Client.Info{
                         .id = @enumFromInt(client_info.?.id),
@@ -335,11 +335,68 @@ pub const Client = struct {
                     },
                 });
             }
+
+            fn permissions(ptr: ?*anyopaque, count: u33, perms: ?[*]const c.pw_permission) callconv(.c) void {
+                @call(.auto, func.permissions.?, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    Permission.fromPw(perms, count),
+                });
+            }
         };
 
         if (c.pw_client_add_listener(client.ptr, listener, &.{
             .version = c.PW_VERSION_CLIENT_EVENTS,
-            .info = &CFunc.info,
+            .info = if (func.info != null) &CFunc.info else null,
+            .permissions = if (func.permissions != null) &CFunc.permissions else null,
+        }, usrptr) != 0) return error.UnableToAddRegisteryListener;
+    }
+};
+
+pub const Device = struct {
+    ptr: *c.pw_device,
+
+    pub const Info = struct {
+        id: Id,
+        change_mask: u64,
+        params: []const SimplePlugin.Param,
+    };
+
+    pub fn DeviceFn(T: type) type {
+        return struct {
+            info: ?*const fn (*T, Info) void = null,
+            params: ?*const fn (*T, ?*anyopaque, c_int, u32, u32, u32, [*c]const c.struct_spa_pod) void = null,
+        };
+    }
+
+    pub fn addListener(dev: Device, T: type, comptime func: DeviceFn(T), listener: *c.spa_hook, usrptr: *T) !void {
+        const CFunc = struct {
+            fn info(ptr: ?*anyopaque, dev_info: ?*const c.pw_device_info) callconv(.c) void {
+                @call(.auto, func.info.?, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    Info{
+                        .id = @enumFromInt(dev_info.?.id),
+                        .change_mask = dev_info.?.change_mask,
+                        .params = SimplePlugin.Param.fromPw(dev_info.?.params, dev_info.?.n_params),
+                    },
+                });
+            }
+
+            fn param(ptr: ?*anyopaque, seq: i32, id: u32, index: u32, next: u32, params: [*]const c.spa_pod) callconv(.c) void {
+                @call(.auto, func, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    seq,
+                    id,
+                    index,
+                    next,
+                    params,
+                });
+            }
+        };
+
+        if (c.pw_device_add_listener(dev.ptr, listener, &.{
+            .version = c.PW_VERSION_DEVICE_EVENTS,
+            .info = if (func.info != null) &CFunc.info else null,
+            .param = if (func.params != null) &CFunc.param else null,
         }, usrptr) != 0) return error.UnableToAddRegisteryListener;
     }
 };
@@ -409,6 +466,13 @@ pub const SimplePlugin = struct {
             tag = 17,
             peer_formats = 18,
         };
+
+        pub fn fromPw(ptr: ?[*]const c.spa_param_info, len: usize) []const Param {
+            if (len == 0) return &.{};
+
+            const params: [*]const Param = @ptrCast(ptr.?);
+            return params[0..len];
+        }
     };
 
     pub const POD = PlainOldData;
@@ -638,12 +702,20 @@ pub const Stream = struct {
     }
 };
 
+pub const Permission = extern struct {
+    id: Id, // TODO global, or local Id?
+    permissions: u32,
+
+    pub fn fromPw(ptr: [*]const c.pw_permission, len: usize) []const Permission {
+        const perms: [*]const Permission = @ptrCast(ptr);
+        return perms[0..len];
+    }
+};
+
 /// Not yet implemented
 pub const DataLoop = void;
 /// Not yet implemented
 pub const DataSystem = void;
-/// Not yet implemented
-pub const Device = void;
 /// Not yet implemented
 pub const Factory = void;
 /// Not yet implemented
