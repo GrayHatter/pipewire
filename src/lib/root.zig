@@ -244,6 +244,7 @@ pub const Registry = struct {
             .client => .{ .client = .{ .ptr = @ptrCast(bind_proxy) } },
             .port => .{ .port = .{ .ptr = @ptrCast(bind_proxy) } },
             .device => .{ .device = .{ .ptr = @ptrCast(bind_proxy) } },
+            .node => .{ .node = .{ .ptr = @ptrCast(bind_proxy) } },
             else => unreachable, // not implemented,
         };
     }
@@ -364,7 +365,7 @@ pub const Device = struct {
     pub fn DeviceFn(T: type) type {
         return struct {
             info: ?*const fn (*T, Info) void = null,
-            params: ?*const fn (*T, ?*anyopaque, c_int, u32, u32, u32, [*c]const c.struct_spa_pod) void = null,
+            param: ?*const fn (*T, ?*anyopaque, c_int, u32, u32, u32, [*c]const c.struct_spa_pod) void = null,
         };
     }
 
@@ -382,22 +383,121 @@ pub const Device = struct {
             }
 
             fn param(ptr: ?*anyopaque, seq: i32, id: u32, index: u32, next: u32, params: [*]const c.spa_pod) callconv(.c) void {
-                @call(.auto, func, .{
-                    @as(*T, @ptrCast(@alignCast(ptr))),
-                    seq,
-                    id,
-                    index,
-                    next,
-                    params,
-                });
+                @call(.auto, func.param.?, .{ @as(*T, @ptrCast(@alignCast(ptr))), seq, id, index, next, params });
             }
         };
 
         if (c.pw_device_add_listener(dev.ptr, listener, &.{
             .version = c.PW_VERSION_DEVICE_EVENTS,
             .info = if (func.info != null) &CFunc.info else null,
-            .param = if (func.params != null) &CFunc.param else null,
+            .param = if (func.param != null) &CFunc.param else null,
         }, usrptr) != 0) return error.UnableToAddRegisteryListener;
+    }
+};
+
+pub const Node = struct {
+    ptr: *c.pw_node,
+
+    pub const Info = struct {
+        id: Id,
+        input_ports_max: u32,
+        output_ports_max: u32,
+        change_mask: Changes,
+        input_ports_count: u32,
+        output_ports_count: u32,
+        state: State,
+        error_str: ?[*:0]const u8,
+        props: SimplePlugin.Dict,
+        params: []const SimplePlugin.Param,
+    };
+
+    pub const State = enum(i32) {
+        err = -1,
+        creating = 0,
+        suspended = 1,
+        idle = 2,
+        running = 3,
+        _,
+    };
+
+    pub const Changes = packed struct(u64) {
+        input_ports: bool,
+        output_ports: bool,
+        state: bool,
+        props: bool,
+        params: bool,
+        _: u59 = 0,
+
+        pub const all: Changes = .{
+            .input_ports = 1,
+            .output_ports = 1,
+            .state = 1,
+            .props = 1,
+            .params = 1,
+        };
+
+        pub const none: Changes = .{
+            .input_ports = 0,
+            .output_ports = 0,
+            .state = 0,
+            .props = 0,
+            .params = 0,
+        };
+    };
+
+    pub fn NodeFn(T: type) type {
+        return struct {
+            info: ?*const fn (*T, Info) void = null,
+            param: ?*const fn (*T, i32, u32, u32, u32, [*]const SimplePlugin.POD) void = null,
+        };
+    }
+
+    pub fn addListener(dev: Node, T: type, comptime func: NodeFn(T), listener: *c.spa_hook, usrptr: *T) !void {
+        const CFunc = struct {
+            fn info(ptr: ?*anyopaque, node_info: ?*const c.pw_node_info) callconv(.c) void {
+                @call(.auto, func.info.?, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    Info{
+                        .id = @enumFromInt(node_info.?.id),
+                        .input_ports_max = node_info.?.max_input_ports,
+                        .output_ports_max = node_info.?.max_output_ports,
+                        .change_mask = @bitCast(node_info.?.change_mask),
+                        .input_ports_count = node_info.?.n_input_ports,
+                        .output_ports_count = node_info.?.n_output_ports,
+                        .state = @enumFromInt(node_info.?.state),
+                        .error_str = node_info.?.@"error",
+                        .props = SimplePlugin.Dict.fromPw(node_info.?.props),
+                        .params = SimplePlugin.Param.fromPw(node_info.?.params, node_info.?.n_params),
+                    },
+                });
+            }
+
+            fn param(ptr: ?*anyopaque, seq: i32, id: u32, index: u32, next: u32, data: ?[*]const c.spa_pod) callconv(.c) void {
+                @call(.auto, func.param.?, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    seq,
+                    id,
+                    index,
+                    next,
+                    @as([*]const SimplePlugin.POD, @ptrCast(data)),
+                });
+            }
+        };
+
+        if (c.pw_node_add_listener(dev.ptr, listener, &.{
+            .version = c.PW_VERSION_NODE_EVENTS,
+            .info = if (func.info != null) &CFunc.info else null,
+            .param = if (func.param != null) &CFunc.param else null,
+        }, usrptr) != 0) return error.UnableToAddRegisteryListener;
+    }
+
+    pub fn enumParams(node: Node, seq: i32, id: SimplePlugin.Param.Id, start: u32, max: u32, filter: []const SimplePlugin.POD) !void {
+        if (filter.len != 0) return error.FilterNotImplemented;
+        const res = c.pw_node_enum_params(node.ptr, seq, @intFromEnum(id), start, max, null);
+        if (res < 0) {
+            std.debug.print("enum res {} : {} {} {} {}\n", .{ res, seq, id, start, max });
+            return error.EnumerationFailed;
+        }
     }
 };
 
@@ -445,6 +545,19 @@ pub const SimplePlugin = struct {
         seq: i32,
         padding: [4]u32,
 
+        // flags hold at least RW bits but perhaps more?
+        pub const Info = struct {
+            pub const Permissions = struct {
+                pub fn read(flags: u32) bool {
+                    return (flags & 1) != 0;
+                }
+
+                pub fn write(flags: u32) bool {
+                    return (flags & 2) != 0;
+                }
+            };
+        };
+
         pub const Id = enum(u32) {
             invalid = 0,
             prop_info = 1,
@@ -476,7 +589,10 @@ pub const SimplePlugin = struct {
     };
 
     pub const POD = PlainOldData;
-    pub const PlainOldData = struct {
+    pub const PlainOldData = extern struct {
+        size: u32,
+        type: Type,
+
         pub const Frame = struct {};
 
         const Type = enum(u32) {
@@ -730,8 +846,6 @@ pub const LoopUtils = void;
 pub const Metadata = void;
 /// Not yet implemented
 pub const Module = void;
-/// Not yet implemented
-pub const Node = void;
 /// Not yet implemented
 pub const Profiler = void;
 /// Not yet implemented
