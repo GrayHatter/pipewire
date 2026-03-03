@@ -583,8 +583,8 @@ pub const SimplePlugin = struct {
             pub fn PodType(id: Param.Id) type {
                 return switch (id) {
                     //.invalid => POD.Key, // not implemented
-                    //.prop_info => unreachable, // not implemented
-                    //.props => unreachable, // not implemented
+                    .prop_info => POD.PropInfo,
+                    .props => POD.Prop,
                     .enum_format => POD.Format,
                     .format => POD.Format,
                     //.buffers => unreachable, // not implemented
@@ -597,11 +597,11 @@ pub const SimplePlugin = struct {
                     //.enum_route => unreachable, // not implemented
                     //.route => unreachable, // not implemented
                     //.control => unreachable, // not implemented
-                    //.latency => unreachable, // not implemented
-                    //.process_latency => unreachable, // not implemented
+                    .latency => POD.Latency,
+                    .process_latency => POD.ProcessLatency,
                     //.tag => unreachable, // not implemented
                     //.peer_formats => unreachable, // not implemented
-                    else => enum(u32) { nothing },
+                    else => enum(u32) { nothing, _ },
                     _ => unreachable,
                 };
             }
@@ -685,6 +685,13 @@ pub const SimplePlugin = struct {
             choice = 19,
             pod = 20,
             _,
+
+            pub fn TypeFor(t: Type) type {
+                inline for (@typeInfo(Kind).@"union".fields) |f| {
+                    if (std.mem.eql(u8, @tagName(t), f.name)) return f.type;
+                }
+                comptime unreachable;
+            }
         };
 
         pub const Kind = union(Type) {
@@ -709,6 +716,34 @@ pub const SimplePlugin = struct {
             choice: Choice,
             pod: void, // 20?
 
+            pub fn init(t: Type, size: usize, r: *std.Io.Reader) !Kind {
+                return switch (t) {
+                    .none => unreachable,
+                    .bool => .{ .bool = (try r.takeInt(u32, .native) != 0) },
+                    .id => .{ .id = try r.takeInt(u32, .native) },
+                    .int => .{ .int = try r.takeInt(i32, .native) },
+                    .long => .{ .long = try r.takeInt(i64, .native) },
+                    .float => .{ .float = @as(*const f32, @ptrCast(@alignCast(try r.takeArray(4)))).* },
+                    .double => .{ .double = @as(*const f64, @ptrCast(@alignCast(try r.takeArray(8)))).* },
+                    .string => .{ .string = (try r.take(size))[0 .. size - 1 :0] },
+                    .bytes => unreachable,
+                    .rectangle => unreachable,
+                    .fraction => unreachable,
+                    .bitmap => unreachable,
+                    .array => .{ .array = .init(try r.take(size)) },
+                    .@"struct" => .{ .@"struct" = .init(try r.take(size)) },
+                    .object => .{ .object = .init(@ptrCast(@alignCast(try r.take(size)))) },
+                    .sequence => unreachable,
+                    .pointer => unreachable,
+                    .fd => unreachable,
+                    .choice => .{ .choice = .init(try r.take(size)) },
+                    .pod => unreachable,
+                    _ => {
+                        std.debug.print("KIND ERROR, {} {} {} {any}\n{}: {any}\n", .{ t, @as(u32, @intFromEnum(t)), size, r.buffered(), r.seek, r.buffer });
+                        unreachable;
+                    },
+                };
+            }
         };
 
         pub const Format = enum(u32) {
@@ -775,6 +810,91 @@ pub const SimplePlugin = struct {
             format = 5,
         };
 
+        pub const PropInfo = enum(u32) {
+            START = 0,
+            id = 1,
+            name = 2,
+            type = 3,
+            labels = 4,
+            container = 5,
+            params = 6,
+            description = 7,
+        };
+
+        pub const Prop = enum(u32) {
+            START = 0,
+            unknown = 1,
+            START_Device = 256,
+            device = 257,
+            device_Name = 258,
+            device_fd = 259,
+            card = 260,
+            card_name = 261,
+            min_latency = 262,
+            max_latency = 263,
+            periods = 264,
+            period_size = 265,
+            period_event = 266,
+            live = 267,
+            rate = 268,
+            quality = 269,
+            bluetooth_audio_codec = 270,
+            bluetooth_offload_active = 271,
+            START_Audio = 65536,
+            wave_type = 65537,
+            frequency = 65538,
+            volume = 65539,
+            mute = 65540,
+            pattern_type = 65541,
+            dither_type = 65542,
+            truncate = 65543,
+            channel_volumes = 65544,
+            volume_base = 65545,
+            volume_step = 65546,
+            channel_map = 65547,
+            monitor_mute = 65548,
+            monitor_volumes = 65549,
+            latency_offset_nsec = 65550,
+            soft_mute = 65551,
+            soft_volumes = 65552,
+            iec958_codecs = 65553,
+            volume_ramp_samples = 65554,
+            volume_ramp_step_samples = 65555,
+            volume_ramp_time = 65556,
+            volume_ramp_step_time = 65557,
+            volume_ramp_scale = 65558,
+            START_Video = 131072,
+            brightness = 131073,
+            contrast = 131074,
+            saturation = 131075,
+            hue = 131076,
+            gamma = 131077,
+            exposure = 131078,
+            gain = 131079,
+            sharpness = 131080,
+            START_Other = 524288,
+            params = 524289,
+            START_CUSTOM = 16777216,
+        };
+
+        pub const Latency = enum(u32) {
+            START = 0,
+            direction = 1,
+            min_quantum = 2,
+            max_quantum = 3,
+            min_rate = 4,
+            max_rate = 5,
+            min_ns = 6,
+            max_ns = 7,
+        };
+
+        pub const ProcessLatency = enum(u32) {
+            START = 0,
+            quantum = 1,
+            rate = 2,
+            ns = 3,
+        };
+
         pub const Rectangle = struct { width: u32, height: u32 };
 
         pub const Fraction = struct { num: u32, dom: u32 };
@@ -814,10 +934,8 @@ pub const SimplePlugin = struct {
 
                 var reader: std.Io.Reader = .fixed(bytes[0..size]);
                 const pod_size = reader.takeInt(u32, .native) catch unreachable;
-                //_ = pod_size;
                 const pod_type = reader.takeEnumNonexhaustive(POD.Type, .native) catch unreachable;
-                //_ = pod_type;
-                std.debug.print("obj {} {} ", .{ pod_size, pod_type });
+                _ = pod_type;
                 return .init(bytes[8..][0..pod_size]);
             }
 
@@ -825,8 +943,6 @@ pub const SimplePlugin = struct {
                 var reader: std.Io.Reader = .fixed(bytes[0..]);
                 const obj_type = reader.takeEnumNonexhaustive(Object.Type, .native) catch unreachable;
                 const obj_id = reader.takeEnumNonexhaustive(Param.Id, .native) catch unreachable;
-
-                std.debug.print("|| {} {}\n", .{ obj_type, obj_id });
 
                 return .{
                     .bytes = @alignCast(bytes),
@@ -844,79 +960,21 @@ pub const SimplePlugin = struct {
             };
 
             pub fn next(obj: *Object) ?Result {
-                //std.debug.print("bytes {any}\n", .{obj.reader.buffered()});
                 const key = obj.reader.takeEnum(Key, .native) catch return null;
                 const flags = obj.reader.takeEnumNonexhaustive(Flags, .native) catch unreachable;
-                // value
                 const value_size = obj.reader.takeInt(u32, .native) catch unreachable;
                 const value_type = obj.reader.takeEnumNonexhaustive(POD.Type, .native) catch unreachable;
-                const debug_start = obj.reader.seek;
-                std.debug.print("next key {} type {} flags {} size {} (reader {} ({}))\n", .{ key, flags, value_size, value_type, obj.reader.seek, value_size -| (obj.reader.seek - debug_start) });
-
                 defer while (obj.reader.seek % 8 != 0) {
                     //std.debug.print("tossing {x}\n", .{obj.reader.takeByte() catch unreachable});
                     obj.reader.toss(1);
                 };
 
-                switch (value_type) {
-                    .none => unreachable,
-                    .bool => return .{
-                        .key = key,
-                        .flags = flags,
-                        .type = value_type,
-                        .value = .{ .bool = (obj.reader.takeInt(u32, .native) catch unreachable != 0) },
-                    },
-                    .id => return .{
-                        .key = key,
-                        .flags = flags,
-                        .type = value_type,
-                        .value = .{ .id = obj.reader.takeInt(u32, .native) catch unreachable },
-                    },
-                    .int => return .{
-                        .key = key,
-                        .flags = flags,
-                        .type = value_type,
-                        .value = .{ .int = obj.reader.takeInt(i32, .native) catch unreachable },
-                    },
-                    .long => unreachable,
-                    .float => return .{
-                        .key = key,
-                        .flags = flags,
-                        .type = value_type,
-                        .value = .{ .float = @as(*const f32, @ptrCast(@alignCast(obj.reader.takeArray(4) catch unreachable))).* },
-                    },
-                    .double => unreachable,
-                    .string => unreachable,
-                    .bytes => unreachable,
-                    .rectangle => unreachable,
-                    .fraction => unreachable,
-                    .bitmap => unreachable,
-                    .array => return .{
-                        .key = key,
-                        .flags = flags,
-                        .type = value_type,
-                        .value = .{ .array = .init(obj.reader.take(value_size) catch unreachable) },
-                    },
-                    .@"struct" => unreachable,
-                    .object => return .{
-                        .key = key,
-                        .flags = flags,
-                        .type = value_type,
-                        .value = .{ .object = .init(@ptrCast(@alignCast(obj.reader.take(value_size) catch unreachable))) },
-                    },
-
-                    .sequence => unreachable,
-                    .pointer => unreachable,
-                    .fd => unreachable,
-                    .choice => return .{
-                        .key = key,
-                        .flags = flags,
-                        .type = value_type,
-                        .value = .{ .choice = .init(obj.reader.take(value_size) catch unreachable) },
-                    },
-                    .pod => unreachable,
-                    _ => unreachable,
-                }
+                return .{
+                    .key = key,
+                    .flags = flags,
+                    .type = value_type,
+                    .value = Kind.init(value_type, value_size, &obj.reader) catch unreachable,
+                };
             }
         };
 
@@ -940,48 +998,41 @@ pub const SimplePlugin = struct {
 
             pub fn next(arr: *Array) ?Kind {
                 if (arr.reader.bufferedLen() == 0) return null;
-                return switch (arr.type) {
-                    .bool => .{ .bool = (arr.reader.takeInt(u32, .native) catch unreachable != 0) },
-                    .id => .{ .id = arr.reader.takeInt(u32, .native) catch unreachable },
-                    .int => .{ .int = arr.reader.takeInt(i32, .native) catch unreachable },
-                    .float => .{ .float = @as(*const f32, @ptrCast(@alignCast(arr.reader.takeArray(4) catch unreachable))).* },
-                    else => unreachable, // not implemented
-                };
+                return Kind.init(arr.type, arr.size, &arr.reader) catch null;
             }
         };
 
         pub const Choice = struct {
             bytes: []const u8,
             type: Choice.Type,
+            flags: u32,
             child_type: POD.Type,
             child_size: u32,
             reader: std.Io.Reader,
 
             pub const Type = enum(u32) {
-                //None (0) : only child1 is an valid option
+                /// None (0) : only child1 is an valid option
                 none = 0,
-                //Range (1) : child1 is a default value, options are between child2 and child3 in the value array.
+                /// Range (1) : child1 is a default value, options are between child2 and child3 in the value array.
                 range = 1,
-                //Step (2) : child1 is a default value, options are between child2 and child3, in steps of child4 in the value array.
+                /// Step (2) : child1 is a default value, options are between child2 and child3, in steps of child4 in the value array.
                 step = 2,
-                //Enum (3) : child1 is a default value, options are any value from the value array, preferred values come first.
+                /// Enum (3) : child1 is a default value, options are any value from the value array, preferred values come first.
                 @"enum" = 3,
-                //Flags (4) : child1 is a default value, options are any value from the value array, preferred values come first.
+                /// Flags (4) : child1 is a default value, options are any value from the value array, preferred values come first.
                 flags = 4,
             };
 
             pub fn init(bytes: []const u8) Choice {
                 var reader: std.Io.Reader = .fixed(bytes);
-                std.debug.print("choice bytes {any}\n", .{reader.buffered()});
                 const ctype = reader.takeEnum(Choice.Type, .native) catch unreachable;
                 const cflags = reader.takeInt(u32, .native) catch unreachable;
-
                 const child_size = reader.takeInt(u32, .native) catch unreachable;
-                std.debug.print("choices size {}\n", .{cflags});
                 const child_type = reader.takeEnum(POD.Type, .native) catch unreachable;
                 return .{
                     .bytes = bytes,
                     .type = ctype,
+                    .flags = cflags,
                     .child_type = child_type,
                     .child_size = child_size,
                     .reader = reader,
@@ -990,26 +1041,32 @@ pub const SimplePlugin = struct {
 
             pub fn next(choice: *Choice) ?Kind {
                 if (choice.reader.bufferedLen() == 0) return null;
-                //defer {
-                //    if (choice.reader.bufferedLen() != 0)
-                //        std.debug.print("tossing choices {any}\n", .{choice.reader.buffered()});
-                //    choice.reader.tossBuffered();
-                //}
-                return switch (choice.child_type) {
-                    .bool => .{ .bool = (choice.reader.takeInt(u32, .native) catch unreachable != 0) },
-                    .id => .{ .id = choice.reader.takeInt(u32, .native) catch unreachable },
-                    .int => .{ .int = choice.reader.takeInt(i32, .native) catch unreachable },
-                    .float => .{ .float = @as(*const f32, @ptrCast(@alignCast(choice.reader.takeArray(4) catch unreachable))).* },
-                    else => |t| {
-                        std.debug.print("not implemented {}\n", .{t});
-                        unreachable; // not implemented
-                    },
+                return Kind.init(choice.child_type, choice.child_size, &choice.reader) catch unreachable;
+            }
+        };
+
+        pub const Struct = struct {
+            bytes: []const u8,
+            reader: std.Io.Reader,
+
+            pub fn init(bytes: []const u8) Struct {
+                return .{
+                    .bytes = bytes,
+                    .reader = .fixed(bytes),
                 };
+            }
+
+            pub fn next(st: *Struct) ?Kind {
+                if (st.reader.bufferedLen() == 0) return null;
+                defer while (st.reader.seek % 8 != 0) st.reader.toss(1);
+
+                const child_size = st.reader.takeInt(u32, .native) catch unreachable;
+                const child_type = st.reader.takeEnum(POD.Type, .native) catch unreachable;
+                return Kind.init(child_type, child_size, &st.reader) catch null;
             }
         };
 
         pub const Bitmap = void;
-        pub const Struct = void;
         pub const Sequence = void;
         pub const Pointer = void;
 
@@ -1027,7 +1084,7 @@ pub const SimplePlugin = struct {
                 builder: *Builder,
                 body: []align(8) u8,
 
-                pub fn append(obj: *ObjBuilder, key: Key, flags: Flags, comptime kind: POD.Type, val: anytype) !void {
+                pub fn append(obj: *ObjBuilder, key: Key, flags: Flags, comptime kind: POD.Type, val: POD.Type.TypeFor(kind)) !void {
                     var buffer: [256]u8 = undefined; // TODO size array correctly
                     var writer: std.Io.Writer = .fixed(&buffer);
                     const padding: u32 = 0;
@@ -1068,14 +1125,15 @@ pub const SimplePlugin = struct {
                 return .{ .bytes = buffer };
             }
 
-            pub fn pushObject(build: *Builder, obj_type: Object.Type, obj_id: Param.Id) !ObjBuilder {
+            pub fn pushObject(build: *Builder, obj_type: Object.Type, obj_id: Param.Id) error{NoSpaceLeft}!ObjBuilder {
                 std.debug.assert(build.len % 8 == 0);
                 var body: []align(8) u8 = @alignCast(build.bytes[build.len..]);
                 const empty_size = 8;
-                std.mem.writeInt(u32, body[0..][0..4], empty_size, .native);
-                std.mem.writeInt(u32, body[4..][0..4], @intFromEnum(POD.Type.object), .native);
-                std.mem.writeInt(u32, body[8..][0..4], @intFromEnum(obj_type), .native);
-                std.mem.writeInt(u32, body[12..][0..4], @intFromEnum(obj_id), .native);
+                var writer: std.Io.Writer = .fixed(body);
+                writer.writeInt(u32, empty_size, .native) catch return error.NoSpaceLeft;
+                writer.writeInt(u32, @intFromEnum(POD.Type.object), .native) catch return error.NoSpaceLeft;
+                writer.writeInt(u32, @intFromEnum(obj_type), .native) catch return error.NoSpaceLeft;
+                writer.writeInt(u32, @intFromEnum(obj_id), .native) catch return error.NoSpaceLeft;
                 return .{
                     .builder = build,
                     .body = body[0 .. 8 + empty_size],
