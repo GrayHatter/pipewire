@@ -251,7 +251,8 @@ pub const Registry = struct {
             .port => .{ .ptr = @ptrCast(bind_proxy) },
             .device => .{ .ptr = @ptrCast(bind_proxy) },
             .node => .{ .ptr = @ptrCast(bind_proxy) },
-            else => unreachable, // not implemented,
+            .link => .{ .ptr = @ptrCast(bind_proxy) },
+            else => comptime unreachable, // not implemented,
         };
     }
 
@@ -261,7 +262,66 @@ pub const Registry = struct {
     }
 };
 
-/// Not yet implemented
+pub const Link = struct {
+    ptr: *c.pw_link,
+
+    pub const Info = struct {
+        id: Id,
+        output_node_id: Id,
+        output_port_id: Id,
+        input_node_id: Id,
+        input_port_id: Id,
+        change_mask: u64,
+        state: State,
+        error_str: ?[*:0]const u8,
+        format: ?*const SimplePlugin.POD,
+    };
+
+    pub const State = enum(i32) {
+        err = -2,
+        unlinked = -1,
+        init = 0,
+        negotiating = 1,
+        allocating = 2,
+        paused = 3,
+        active = 4,
+    };
+
+    pub fn LinkFn(T: type) type {
+        return struct {
+            info: ?*const fn (*T, Info) void = null,
+        };
+    }
+
+    pub fn addListener(link: Link, T: type, comptime func: LinkFn(T), listener: *c.spa_hook, usrptr: *T) !void {
+        const CFunc = struct {
+            fn info(ptr: ?*anyopaque, link_info: ?*const c.pw_link_info) callconv(.c) void {
+                const l_info = link_info orelse unreachable;
+                const format: ?*const c.spa_pod = l_info.format;
+                @call(.auto, func.info.?, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    Info{
+                        .id = @enumFromInt(l_info.id),
+                        .output_node_id = @enumFromInt(l_info.output_node_id),
+                        .output_port_id = @enumFromInt(l_info.output_port_id),
+                        .input_node_id = @enumFromInt(l_info.input_node_id),
+                        .input_port_id = @enumFromInt(l_info.input_port_id),
+                        .change_mask = l_info.change_mask,
+                        .state = @enumFromInt(l_info.state),
+                        .error_str = l_info.@"error",
+                        .format = if (format) |fmt| @ptrCast(fmt) else null,
+                    },
+                });
+            }
+        };
+
+        if (c.pw_link_add_listener(link.ptr, listener, &.{
+            .version = c.PW_VERSION_LINK_EVENTS,
+            .info = if (func.info != null) &CFunc.info else null,
+        }, usrptr) != 0) return error.UnableToAddRegisteryListener;
+    }
+};
+
 pub const Port = struct {
     ptr: *c.pw_port,
 
@@ -1295,7 +1355,7 @@ pub const SimplePlugin = struct {
             try std.testing.expectEqualSlices(u8, &c_pod_buffer, &zig_pod_buffer);
         }
 
-        pub fn read(pod: *const POD) Kind {
+        pub fn init(pod: *const POD) Kind {
             switch (pod.type) {
                 .object => return .{ .object = Object.fromPod(pod) },
 
@@ -1414,8 +1474,6 @@ pub const DataSystem = void;
 /// Not yet implemented
 pub const Factory = void;
 /// Not yet implemented
-pub const Link = void;
-/// Not yet implemented
 pub const Log = void;
 /// Not yet implemented
 pub const LoopControl = void;
@@ -1449,7 +1507,7 @@ test {
     _ = &std.testing.refAllDecls(Context);
     _ = &std.testing.refAllDecls(Core);
     _ = &std.testing.refAllDecls(Registry);
-    //_ = &std.testing.refAllDecls(Link);
+    _ = &std.testing.refAllDecls(Link);
     _ = &std.testing.refAllDecls(Port);
     _ = &std.testing.refAllDecls(Client);
     _ = &std.testing.refAllDecls(Device);
