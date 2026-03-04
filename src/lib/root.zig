@@ -16,6 +16,135 @@ pub fn deinit() void {
     c.pw_deinit();
 }
 
+pub const Interface = union(Interface.Name) {
+    client: Client,
+    core: Core,
+    data_loop: DataLoop,
+    data_system: DataSystem,
+    device: Device,
+    factory: Factory,
+    link: Link,
+    log: Log,
+    loop: Loop,
+    loop_control: LoopControl,
+    loop_utils: LoopUtils,
+    metadata: Metadata,
+    module: Module,
+    node: Node,
+    profiler: Profiler,
+    port: Port,
+    registry: Registry,
+    security_context: SecurityContext,
+    system: System,
+    thread_utils: ThreadUtils,
+
+    pub const Name = enum {
+        client,
+        core,
+        data_loop,
+        data_system,
+        device,
+        factory,
+        link,
+        log,
+        loop,
+        loop_control,
+        loop_utils,
+        metadata,
+        module,
+        node,
+        profiler,
+        port,
+        registry,
+        security_context,
+        system,
+        thread_utils,
+
+        pub fn TypeFor(name: Name) type {
+            inline for (@typeInfo(Interface).@"union".fields) |f| {
+                if (std.mem.eql(u8, @tagName(name), f.name)) return f.type;
+            }
+            comptime unreachable;
+        }
+
+        pub fn toStr(name: Name) [*:0]const u8 {
+            // TODO should this be PW_TYPE_INTERFACE_client?
+            const pwif_prefix = "PipeWire:Interface:";
+            return switch (name) {
+                .client => pwif_prefix ++ "Client",
+                .core => pwif_prefix ++ "Core",
+                .data_loop => pwif_prefix ++ "DataLoop",
+                .data_system => pwif_prefix ++ "DataSystem",
+                .device => pwif_prefix ++ "Device",
+                .factory => pwif_prefix ++ "Factory",
+                .link => pwif_prefix ++ "Link",
+                .log => pwif_prefix ++ "Log",
+                .loop => pwif_prefix ++ "Loop",
+                .loop_control => pwif_prefix ++ "LoopControl",
+                .loop_utils => pwif_prefix ++ "LoopUtils",
+                .metadata => pwif_prefix ++ "Metadata",
+                .module => pwif_prefix ++ "Module",
+                .node => pwif_prefix ++ "Node",
+                .port => pwif_prefix ++ "Port",
+                .profiler => pwif_prefix ++ "Profiler",
+                .registry => pwif_prefix ++ "Registry",
+                .security_context => pwif_prefix ++ "SecurityContext",
+                .system => pwif_prefix ++ "System",
+                .thread_utils => pwif_prefix ++ "ThreadUtils",
+            };
+        }
+
+        pub fn fromStr(str_ptr: [*:0]const u8) !Name {
+            const str = std.mem.span(str_ptr);
+            if (std.mem.cutPrefix(u8, str, "PipeWire:Interface:")) |cut| {
+                if (std.mem.eql(u8, cut, "Client")) {
+                    return .client;
+                } else if (std.mem.eql(u8, cut, "Core")) {
+                    return .core;
+                } else if (std.mem.eql(u8, cut, "DataLoop")) {
+                    return .data_loop;
+                } else if (std.mem.eql(u8, cut, "DataSystem")) {
+                    return .data_system;
+                } else if (std.mem.eql(u8, cut, "Device")) {
+                    return .device;
+                } else if (std.mem.eql(u8, cut, "Factory")) {
+                    return .factory;
+                } else if (std.mem.eql(u8, cut, "Link")) {
+                    return .link;
+                } else if (std.mem.eql(u8, cut, "Log")) {
+                    return .log;
+                } else if (std.mem.eql(u8, cut, "Loop")) {
+                    return .loop;
+                } else if (std.mem.eql(u8, cut, "LoopControl")) {
+                    return .loop_control;
+                } else if (std.mem.eql(u8, cut, "LoopUtils")) {
+                    return .loop_utils;
+                } else if (std.mem.eql(u8, cut, "Metadata")) {
+                    return .metadata;
+                } else if (std.mem.eql(u8, cut, "Module")) {
+                    return .module;
+                } else if (std.mem.eql(u8, cut, "Node")) {
+                    return .node;
+                } else if (std.mem.eql(u8, cut, "Port")) {
+                    return .port;
+                } else if (std.mem.eql(u8, cut, "Profiler")) {
+                    return .profiler;
+                } else if (std.mem.eql(u8, cut, "Registry")) {
+                    return .registry;
+                } else if (std.mem.eql(u8, cut, "SecurityContext")) {
+                    return .security_context;
+                } else if (std.mem.eql(u8, cut, "System")) {
+                    return .system;
+                } else if (std.mem.eql(u8, cut, "ThreadUtils")) {
+                    return .thread_utils;
+                }
+            }
+
+            return error.UnknownInterfaceTypeString;
+        }
+    };
+};
+
 pub const MainLoop = struct {
     ptr: *c.pw_main_loop,
 
@@ -83,7 +212,7 @@ pub const Registry = struct {
 
     /// use type void when the user ptr provided to pipewire is expected to be null
     pub fn ListenerFn(T: type) type {
-        return *const fn (*T, Id, u32, ?Target, u32, SimplePlugin.Dict) void;
+        return *const fn (*T, Id, u32, ?Interface.Name, u32, SimplePlugin.Dict) void;
     }
 
     pub fn addListener(reg: Registry, T: type, comptime func: ListenerFn(T), reg_listener: *c.spa_hook, usrptr: *T) !void {
@@ -100,7 +229,7 @@ pub const Registry = struct {
                     @as(*T, @ptrCast(@alignCast(ptr))),
                     @as(Id, @enumFromInt(id)),
                     permissions,
-                    if (name) |n| Target.fromStr(n) catch null else null,
+                    if (name) |n| Interface.Name.fromStr(n) catch null else null,
                     version,
                     SimplePlugin.Dict.fromPw(props.?),
                 });
@@ -113,138 +242,15 @@ pub const Registry = struct {
         }, usrptr) != 0) return error.UnableToAddRegisteryListener;
     }
 
-    pub const Target = enum {
-        client,
-        core,
-        data_loop,
-        data_system,
-        device,
-        factory,
-        link,
-        log,
-        loop,
-        loop_control,
-        loop_utils,
-        metadata,
-        module,
-        node,
-        profiler,
-        port,
-        registry,
-        security_context,
-        system,
-        thread_utils,
-
-        pub fn toStr(t: Target) [*:0]const u8 {
-            // TODO should this be PW_TYPE_INTERFACE_client?
-            const pwif_prefix = "PipeWire:Interface:";
-            return switch (t) {
-                .client => pwif_prefix ++ "Client",
-                .core => pwif_prefix ++ "Core",
-                .data_loop => pwif_prefix ++ "DataLoop",
-                .data_system => pwif_prefix ++ "DataSystem",
-                .device => pwif_prefix ++ "Device",
-                .factory => pwif_prefix ++ "Factory",
-                .link => pwif_prefix ++ "Link",
-                .log => pwif_prefix ++ "Log",
-                .loop => pwif_prefix ++ "Loop",
-                .loop_control => pwif_prefix ++ "LoopControl",
-                .loop_utils => pwif_prefix ++ "LoopUtils",
-                .metadata => pwif_prefix ++ "Metadata",
-                .module => pwif_prefix ++ "Module",
-                .node => pwif_prefix ++ "Node",
-                .port => pwif_prefix ++ "Port",
-                .profiler => pwif_prefix ++ "Profiler",
-                .registry => pwif_prefix ++ "Registry",
-                .security_context => pwif_prefix ++ "SecurityContext",
-                .system => pwif_prefix ++ "System",
-                .thread_utils => pwif_prefix ++ "ThreadUtils",
-            };
-        }
-
-        pub fn fromStr(str_ptr: [*:0]const u8) !Target {
-            const str = std.mem.span(str_ptr);
-            if (std.mem.cutPrefix(u8, str, "PipeWire:Interface:")) |cut| {
-                if (std.mem.eql(u8, cut, "Client")) {
-                    return .client;
-                } else if (std.mem.eql(u8, cut, "Core")) {
-                    return .core;
-                } else if (std.mem.eql(u8, cut, "DataLoop")) {
-                    return .data_loop;
-                } else if (std.mem.eql(u8, cut, "DataSystem")) {
-                    return .data_system;
-                } else if (std.mem.eql(u8, cut, "Device")) {
-                    return .device;
-                } else if (std.mem.eql(u8, cut, "Factory")) {
-                    return .factory;
-                } else if (std.mem.eql(u8, cut, "Link")) {
-                    return .link;
-                } else if (std.mem.eql(u8, cut, "Log")) {
-                    return .log;
-                } else if (std.mem.eql(u8, cut, "Loop")) {
-                    return .loop;
-                } else if (std.mem.eql(u8, cut, "LoopControl")) {
-                    return .loop_control;
-                } else if (std.mem.eql(u8, cut, "LoopUtils")) {
-                    return .loop_utils;
-                } else if (std.mem.eql(u8, cut, "Metadata")) {
-                    return .metadata;
-                } else if (std.mem.eql(u8, cut, "Module")) {
-                    return .module;
-                } else if (std.mem.eql(u8, cut, "Node")) {
-                    return .node;
-                } else if (std.mem.eql(u8, cut, "Port")) {
-                    return .port;
-                } else if (std.mem.eql(u8, cut, "Profiler")) {
-                    return .profiler;
-                } else if (std.mem.eql(u8, cut, "Registry")) {
-                    return .registry;
-                } else if (std.mem.eql(u8, cut, "SecurityContext")) {
-                    return .security_context;
-                } else if (std.mem.eql(u8, cut, "System")) {
-                    return .system;
-                } else if (std.mem.eql(u8, cut, "ThreadUtils")) {
-                    return .thread_utils;
-                }
-            }
-
-            return error.UnknownInterfaceTypeString;
-        }
-    };
-
-    pub const Bind = union(Target) {
-        client: Client,
-        core: Core,
-        data_loop: DataLoop,
-        data_system: DataSystem,
-        device: Device,
-        factory: Factory,
-        link: Link,
-        log: Log,
-        loop: Loop,
-        loop_control: LoopControl,
-        loop_utils: LoopUtils,
-        metadata: Metadata,
-        module: Module,
-        node: Node,
-        profiler: Profiler,
-        port: Port,
-        registry: Registry,
-        security_context: SecurityContext,
-        system: System,
-        thread_utils: ThreadUtils,
-    };
-
-    pub fn bind(reg: Registry, target: Target, id: Id, ver: u32, size: usize) !Bind {
+    pub fn bind(reg: Registry, comptime target: Interface.Name, id: Id, ver: u32, size: usize) !target.TypeFor() {
         // TODO what is size?
-
         const bind_proxy = c.pw_registry_bind(reg.ptr, @intFromEnum(id), target.toStr(), ver, size) orelse return error.UnableToBindToRegistry;
 
         return switch (target) {
-            .client => .{ .client = .{ .ptr = @ptrCast(bind_proxy) } },
-            .port => .{ .port = .{ .ptr = @ptrCast(bind_proxy) } },
-            .device => .{ .device = .{ .ptr = @ptrCast(bind_proxy) } },
-            .node => .{ .node = .{ .ptr = @ptrCast(bind_proxy) } },
+            .client => .{ .ptr = @ptrCast(bind_proxy) },
+            .port => .{ .ptr = @ptrCast(bind_proxy) },
+            .device => .{ .ptr = @ptrCast(bind_proxy) },
+            .node => .{ .ptr = @ptrCast(bind_proxy) },
             else => unreachable, // not implemented,
         };
     }
@@ -304,6 +310,7 @@ pub const Port = struct {
         if (c.pw_port_add_listener(port.ptr, listener, &.{
             .version = c.PW_VERSION_PORT_EVENTS,
             .info = if (func.info != null) &CFunc.info else null,
+            .params = if (func.params != null) &CFunc.params else null,
         }, usrptr) != 0) return error.UnableToAddRegisteryListener;
     }
 };
