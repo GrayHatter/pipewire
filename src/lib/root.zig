@@ -1257,7 +1257,7 @@ pub const SimplePlugin = struct {
         };
 
         test Builder {
-            var c_pod_buffer: [2048]u8 = undefined;
+            var c_pod_buffer: [2048]u8 align(8) = undefined;
             var pod_builder: c.spa_pod_builder = .{ .data = &c_pod_buffer, .size = c_pod_buffer.len };
             var frame: c.spa_pod_frame = undefined;
             _ = c.spa_pod_builder_push_object(&pod_builder, &frame, c.SPA_TYPE_OBJECT_Format, c.SPA_PARAM_EnumFormat);
@@ -1275,12 +1275,12 @@ pub const SimplePlugin = struct {
 
             var zig_pod_buffer: [2048]u8 align(8) = undefined;
             var builder: Builder = .init(&zig_pod_buffer);
-            var zig_frame = try builder.pushObject(c.SPA_TYPE_OBJECT_Format, .enum_format);
-            try zig_frame.append(c.SPA_FORMAT_mediaType, .none, .id, c.SPA_MEDIA_TYPE_audio);
-            try zig_frame.append(c.SPA_FORMAT_mediaSubtype, .none, .id, c.SPA_MEDIA_SUBTYPE_raw);
-            try zig_frame.append(c.SPA_FORMAT_AUDIO_format, .none, .id, c.SPA_AUDIO_FORMAT_F32);
-            try zig_frame.append(c.SPA_FORMAT_AUDIO_rate, .none, .int, @as(u32, 48000));
-            try zig_frame.append(c.SPA_FORMAT_AUDIO_channels, .none, .int, @as(u32, 2));
+            var zig_frame = try builder.pushObject(.format, .enum_format);
+            try zig_frame.append(.format(.media_type), .none, .id, c.SPA_MEDIA_TYPE_audio);
+            try zig_frame.append(.format(.media_subtype), .none, .id, c.SPA_MEDIA_SUBTYPE_raw);
+            try zig_frame.append(.format(.audio_format), .none, .id, c.SPA_AUDIO_FORMAT_F32);
+            try zig_frame.append(.format(.audio_rate), .none, .int, @as(u32, 48000));
+            try zig_frame.append(.format(.audio_channels), .none, .int, @as(u32, 2));
 
             try std.testing.expectEqual(&zig_pod_buffer, @as([*]u8, @ptrCast(zig_frame.toPwPod())));
             try std.testing.expectEqual(c.spa_pod{ .size = 128, .type = 15 }, zig_frame.toPwPod().*);
@@ -1437,4 +1437,30 @@ comptime {
 
 test {
     _ = &std.testing.refAllDecls(@This());
+    _ = &std.testing.refAllDecls(MainLoop);
+    _ = &std.testing.refAllDecls(Loop);
+    _ = &std.testing.refAllDecls(Context);
+    _ = &std.testing.refAllDecls(Core);
+    _ = &std.testing.refAllDecls(Registry);
+    //_ = &std.testing.refAllDecls(Link);
+    _ = &std.testing.refAllDecls(Port);
+    _ = &std.testing.refAllDecls(Client);
+    _ = &std.testing.refAllDecls(Device);
+    _ = &std.testing.refAllDecls(Node);
+    _ = &std.testing.refAllDecls(Properties);
+    _ = &std.testing.refAllDecls(SPA);
+    _ = &std.testing.refAllDecls(Stream);
+    _ = &std.testing.refAllDecls(Permission);
+    //_ = &std.testing.refAllDecls(DataLoop);
+    //_ = &std.testing.refAllDecls(DataSystem);
+    //_ = &std.testing.refAllDecls(Factory);
+    //_ = &std.testing.refAllDecls(Log);
+    //_ = &std.testing.refAllDecls(LoopControl);
+    //_ = &std.testing.refAllDecls(LoopUtils);
+    //_ = &std.testing.refAllDecls(Metadata);
+    //_ = &std.testing.refAllDecls(Module);
+    //_ = &std.testing.refAllDecls(Profiler);
+    //_ = &std.testing.refAllDecls(SecurityContext);
+    //_ = &std.testing.refAllDecls(System);
+    //_ = &std.testing.refAllDecls(ThreadUtils);
 }
