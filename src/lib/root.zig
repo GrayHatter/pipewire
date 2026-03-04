@@ -495,8 +495,16 @@ pub const Node = struct {
         if (filter.len != 0) return error.FilterNotImplemented;
         const res = c.pw_node_enum_params(node.ptr, seq, @intFromEnum(id), start, max, null);
         if (res < 0) {
-            std.debug.print("enum res {} : {} {} {} {}\n", .{ res, seq, id, start, max });
+            std.debug.print("Node enum prams failure {} : {} {} {} {}\n", .{ res, seq, id, start, max });
             return error.EnumerationFailed;
+        }
+    }
+
+    pub fn setParam(node: Node, param_id: SimplePlugin.Param.Id, flags: u32, params: *const c.struct_spa_pod) !void {
+        const res = c.pw_node_set_param(node.ptr, @intFromEnum(param_id), flags, @ptrCast(params));
+        if (res < 0) {
+            std.debug.print("Node set param failure {}\n", .{res});
+            return error.SetParamFailed;
         }
     }
 };
@@ -508,7 +516,8 @@ pub const Properties = struct {
         //const len = comptime std.mem.span(key_values).len;
         comptime std.debug.assert(kv.len & 1 == 0);
         //const Args = @Tuple([kv.len:null]?[*:0]const u8;
-        var args: @Tuple(&@as([7]type, @splat(?[*:0]const u8))) = undefined;
+        const size = kv.len + 1;
+        var args: @Tuple(&@as([size]type, @splat(?[*:0]const u8))) = undefined;
         inline for (kv, 0..) |src, i| {
             args[i] = src;
         } else args[kv.len] = null;
@@ -517,6 +526,10 @@ pub const Properties = struct {
     }
 };
 
+/// Alias to SimplePlugin used throughout Pipewire.
+pub const SPA = SimplePlugin;
+
+/// Known through out Pipewire as SPA, or Simple Plugin API.
 pub const SimplePlugin = struct {
     pub const Dict = struct {
         flags: u32,
@@ -582,26 +595,25 @@ pub const SimplePlugin = struct {
 
             pub fn PodType(id: Param.Id) type {
                 return switch (id) {
-                    //.invalid => POD.Key, // not implemented
+                    .invalid => enum(u32) { nothing, _ }, // not implemented
                     .prop_info => POD.PropInfo,
                     .props => POD.Prop,
                     .enum_format => POD.Format,
                     .format => POD.Format,
-                    //.buffers => unreachable, // not implemented
-                    //.meta => unreachable, // not implemented
-                    //.io => unreachable, // not implemented
-                    //.enum_profile => unreachable, // not implemented
-                    //.profile => unreachable, // not implemented
-                    .enum_port_config => POD.PortConfig, // not implemented
+                    .buffers => POD.Buffers,
+                    .meta => POD.Meta,
+                    .io => POD.Io,
+                    .enum_profile => POD.Profile,
+                    .profile => POD.Profile,
+                    .enum_port_config => POD.PortConfig,
                     .port_config => POD.PortConfig,
-                    //.enum_route => unreachable, // not implemented
-                    //.route => unreachable, // not implemented
-                    //.control => unreachable, // not implemented
+                    .enum_route => POD.Route,
+                    .route => POD.Route,
+                    .control => enum(u32) { nothing, _ }, // SPA_PARAM_Control doesn't exist
                     .latency => POD.Latency,
                     .process_latency => POD.ProcessLatency,
-                    //.tag => unreachable, // not implemented
-                    //.peer_formats => unreachable, // not implemented
-                    else => enum(u32) { nothing, _ },
+                    .tag => POD.Tag,
+                    .peer_formats => POD.Format, // Unvalidated, but seems likely?
                     _ => unreachable,
                 };
             }
@@ -633,6 +645,10 @@ pub const SimplePlugin = struct {
             }
 
             pub fn portConfig(p: PortConfig) Key {
+                return @enumFromInt(@intFromEnum(p));
+            }
+
+            pub fn prop(p: Prop) Key {
                 return @enumFromInt(@intFromEnum(p));
             }
 
@@ -795,6 +811,46 @@ pub const SimplePlugin = struct {
             control_types = 393217,
         };
 
+        pub const Buffers = enum(u32) {
+            START = 0,
+            buffers = 1,
+            blocks = 2,
+            size = 3,
+            stride = 4,
+            @"align" = 5,
+            dataType = 6,
+            metaType = 7,
+            _,
+        };
+
+        pub const Meta = enum(u32) {
+            START = 0,
+            type = 1,
+            size = 2,
+            features = 3,
+            _,
+        };
+
+        pub const Io = enum(u32) {
+            START = 0,
+            id = 1,
+            size = 2,
+            _,
+        };
+
+        pub const Profile = enum(u32) {
+            START = 0,
+            index = 1,
+            name = 2,
+            description = 3,
+            priority = 4,
+            available = 5,
+            info = 6,
+            classes = 7,
+            save = 8,
+            _,
+        };
+
         pub const PortConfigMode = enum(u32) {
             none = 0,
             passthrough = 1,
@@ -808,6 +864,31 @@ pub const SimplePlugin = struct {
             monitor = 3,
             control = 4,
             format = 5,
+        };
+
+        pub const Route = enum(u32) {
+            START = 0,
+            index = 1,
+            direction = 2,
+            device = 3,
+            name = 4,
+            description = 5,
+            priority = 6,
+            available = 7,
+            info = 8,
+            profiles = 9,
+            props = 10,
+            devices = 11,
+            profile = 12,
+            save = 13,
+            _,
+        };
+
+        pub const Tag = enum(u32) {
+            START = 0,
+            direction = 1,
+            info = 2,
+            _,
         };
 
         pub const PropInfo = enum(u32) {
@@ -1084,7 +1165,7 @@ pub const SimplePlugin = struct {
                 builder: *Builder,
                 body: []align(8) u8,
 
-                pub fn append(obj: *ObjBuilder, key: Key, flags: Flags, comptime kind: POD.Type, val: POD.Type.TypeFor(kind)) !void {
+                pub fn append(obj: *ObjBuilder, key: Key, flags: Flags, comptime kind: POD.Type, value: anytype) !void {
                     var buffer: [256]u8 = undefined; // TODO size array correctly
                     var writer: std.Io.Writer = .fixed(&buffer);
                     const padding: u32 = 0;
@@ -1094,19 +1175,36 @@ pub const SimplePlugin = struct {
                         .id => {
                             writer.writeInt(u32, 4, .native) catch return error.NoSpaceLeft; // size
                             writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, @bitCast(val), .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, @bitCast(value), .native) catch return error.NoSpaceLeft;
                             writer.writeInt(u32, padding, .native) catch return error.NoSpaceLeft;
                         },
 
                         .int => {
                             writer.writeInt(u32, 4, .native) catch return error.NoSpaceLeft; // size
                             writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, @bitCast(val), .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, @bitCast(value), .native) catch return error.NoSpaceLeft;
                             writer.writeInt(u32, padding, .native) catch return error.NoSpaceLeft;
                         },
-                        .object => unreachable,
-                        else => unreachable, // not implemented,
-                        _ => unreachable,
+                        .array => {
+                            // TODO construct sane api instead of this monstrosity
+                            const child_type: POD.Type = value[0];
+                            const array: []const child_type.TypeFor() = value[1];
+                            const array_size: usize = (@sizeOf(child_type.TypeFor()) * array.len);
+
+                            writer.writeInt(u32, array_size + 8, .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, array_size, .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, @intFromEnum(child_type), .native) catch return error.NoSpaceLeft;
+
+                            for (array) |item|
+                                writer.writeAll(std.mem.asBytes(&item)) catch return error.NoSpaceLeft;
+
+                            for (array_size..array_size + 7 & ~@as(usize, 7)) |_|
+                                writer.writeByte(0) catch return error.NoSpaceLeft;
+                        },
+                        .object => unreachable, // TODO
+                        else => comptime unreachable, // not implemented,
+                        _ => comptime unreachable,
                     }
 
                     obj.body = try obj.builder.append(obj.body, writer.buffered());
