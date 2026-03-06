@@ -16,6 +16,17 @@ pub fn deinit() void {
     c.pw_deinit();
 }
 
+pub const Id = enum(u32) {
+    core = 0,
+    client = 1,
+    any = std.math.maxInt(u32),
+    _,
+
+    pub fn id(int: u32) Id {
+        return @enumFromInt(int);
+    }
+};
+
 pub const Interface = union(Interface.Name) {
     client: Client,
     core: Core,
@@ -145,11 +156,61 @@ pub const Interface = union(Interface.Name) {
     };
 };
 
+pub const Sequence = enum(u31) {
+    zero = 0,
+    _,
+
+    pub fn seq(int: i32) Sequence {
+        std.debug.assert(int >= 0);
+        return @enumFromInt(@as(u31, @intCast(int)));
+    }
+};
+
 pub const MainLoop = struct {
     ptr: *c.pw_main_loop,
+    /// Convenience var which can be used to track the current seq. Modified when `roundtrip`
+    /// is called, and the previous value is restored IFF unmodified during the roundtrip.
+    seq: Sequence = .zero,
 
     pub fn run(ml: MainLoop) !void {
         if (c.pw_main_loop_run(ml.ptr) != 0) return error.MainLoopRunFailed;
+    }
+
+    pub fn quit(ml: MainLoop) !void {
+        if (c.pw_main_loop_quit(ml.ptr) < 0) return error.MainLoopQuitError; // Seems unlikely
+    }
+
+    fn roundtripSync(ml_ptr: ?*anyopaque, id: u32, seq_: i32) callconv(.c) void {
+        const ml: *const MainLoop = @ptrCast(@alignCast(ml_ptr.?));
+        const seq: Sequence = .seq(seq_);
+        if (id == c.PW_ID_CORE and seq == ml.seq)
+            ml.quit() catch unreachable;
+    }
+
+    /// Convenience function to issue a single roundtrip to pipewire. Exits when pipewire emits a
+    /// `done` event for the seq number stored in `MainLoop.seq`. If you issue additional calls to
+    /// pipewire during the roundtrip, update seq to the new number returned by that call.
+    ///
+    /// Note: Calls `quit` on `MainLoop` internally. Shouldn't be used within an already running loop
+    pub fn roundtrip(ml: *MainLoop, core: Core) !void {
+        const prev_seq = ml.seq;
+        var rt_seq = ml.seq;
+        defer {
+            if (ml.seq == rt_seq) ml.seq = prev_seq;
+        }
+
+        var core_listener: c.spa_hook = undefined;
+        if (c.pw_core_add_listener(core.ptr, &core_listener, &.{
+            .version = c.PW_VERSION_CORE_EVENTS,
+            .done = roundtripSync,
+        }, ml) != 0) return error.UnableToAddCoreListener;
+        defer _ = c.spa_hook_remove(&core_listener);
+
+        rt_seq = try core.sync(.core, 0);
+        ml.seq = rt_seq;
+
+        const err = c.pw_main_loop_run(ml.ptr);
+        if (err < 0) return error.RoundtripFailed;
     }
 
     pub fn init(props: ?*const c.struct_spa_dict) !MainLoop {
@@ -171,6 +232,10 @@ pub const MainLoop = struct {
 
 pub const Loop = struct {
     ptr: *c.pw_loop,
+
+    pub fn newContext(loop: Loop) !Context {
+        return try .init(loop);
+    }
 };
 
 pub const Context = struct {
@@ -195,6 +260,12 @@ pub const Context = struct {
 
 pub const Core = struct {
     ptr: *c.pw_core,
+
+    pub fn sync(core: Core, id: Id, seq: i32) !Sequence {
+        const res = c.pw_core_sync(core.ptr, @intFromEnum(id), seq);
+        if (res < 0) return error.CoreSyncFailed;
+        return .seq(res);
+    }
 
     pub fn getRegistry(core: Core) !Registry {
         return .{
@@ -336,7 +407,7 @@ pub const Port = struct {
     pub fn PortFn(T: type) type {
         return struct {
             info: ?*const fn (*T, Info) void = null,
-            params: ?*const fn (*T, ?*anyopaque, c_int, u32, u32, u32, [*c]const c.struct_spa_pod) void = null,
+            param: ?*const fn (*T, Sequence, Id, u32, u32, [*]const SimplePlugin.POD) void = null,
         };
     }
 
@@ -355,14 +426,14 @@ pub const Port = struct {
                 });
             }
 
-            fn params(ptr: ?*anyopaque, client_info: ?*const c.pw_client_info) callconv(.c) void {
+            fn param(ptr: ?*anyopaque, seq: i32, id: u32, index: u32, next: u32, data: [*]const c.spa_pod) callconv(.c) void {
                 @call(.auto, func, .{
                     @as(*T, @ptrCast(@alignCast(ptr))),
-                    Info{
-                        .id = @enumFromInt(client_info.?.id),
-                        .change_mask = client_info.?.change_mask,
-                        .props = SimplePlugin.Dict.fromPw(client_info.?.props),
-                    },
+                    Sequence.seq(seq),
+                    @as(SimplePlugin.Param.Id, @enumFromInt(id)),
+                    index,
+                    next,
+                    @as([*]const SimplePlugin.POD, @ptrCast(data)),
                 });
             }
         };
@@ -370,7 +441,7 @@ pub const Port = struct {
         if (c.pw_port_add_listener(port.ptr, listener, &.{
             .version = c.PW_VERSION_PORT_EVENTS,
             .info = if (func.info != null) &CFunc.info else null,
-            .params = if (func.params != null) &CFunc.params else null,
+            .param = if (func.param != null) &CFunc.param else null,
         }, usrptr) != 0) return error.UnableToAddRegisteryListener;
     }
 };
@@ -432,7 +503,7 @@ pub const Device = struct {
     pub fn DeviceFn(T: type) type {
         return struct {
             info: ?*const fn (*T, Info) void = null,
-            param: ?*const fn (*T, ?*anyopaque, c_int, u32, u32, u32, [*c]const c.struct_spa_pod) void = null,
+            param: ?*const fn (*T, ?*anyopaque, Sequence, u32, u32, u32, [*c]const c.struct_spa_pod) void = null,
         };
     }
 
@@ -515,7 +586,7 @@ pub const Node = struct {
     pub fn NodeFn(T: type) type {
         return struct {
             info: ?*const fn (*T, Info) void = null,
-            param: ?*const fn (*T, i32, SimplePlugin.Param.Id, u32, u32, [*]const SimplePlugin.POD) void = null,
+            param: ?*const fn (*T, Sequence, SimplePlugin.Param.Id, u32, u32, [*]const SimplePlugin.POD) void = null,
         };
     }
 
@@ -542,7 +613,7 @@ pub const Node = struct {
             fn param(ptr: ?*anyopaque, seq: i32, id: u32, index: u32, next: u32, data: ?[*]const c.spa_pod) callconv(.c) void {
                 @call(.auto, func.param.?, .{
                     @as(*T, @ptrCast(@alignCast(ptr))),
-                    seq,
+                    Sequence.seq(seq),
                     @as(SimplePlugin.Param.Id, @enumFromInt(id)),
                     index,
                     next,
@@ -558,21 +629,23 @@ pub const Node = struct {
         }, usrptr) != 0) return error.UnableToAddRegisteryListener;
     }
 
-    pub fn enumParams(node: Node, seq: i32, id: SimplePlugin.Param.Id, start: u32, max: u32, filter: []const SimplePlugin.POD) !void {
+    pub fn enumParams(node: Node, seq: Sequence, id: SimplePlugin.Param.Id, start: u32, max: u32, filter: []const SimplePlugin.POD) !Sequence {
         if (filter.len != 0) return error.FilterNotImplemented;
-        const res = c.pw_node_enum_params(node.ptr, seq, @intFromEnum(id), start, max, null);
+        const res = c.pw_node_enum_params(node.ptr, @intFromEnum(seq), @intFromEnum(id), start, max, null);
         if (res < 0) {
             std.debug.print("Node enum prams failure {} : {} {} {} {}\n", .{ res, seq, id, start, max });
             return error.EnumerationFailed;
         }
+        return .seq(res);
     }
 
-    pub fn setParam(node: Node, param_id: SimplePlugin.Param.Id, flags: u32, params: *const c.struct_spa_pod) !void {
+    pub fn setParam(node: Node, param_id: SimplePlugin.Param.Id, flags: u32, params: *const c.struct_spa_pod) !Sequence {
         const res = c.pw_node_set_param(node.ptr, @intFromEnum(param_id), flags, @ptrCast(params));
         if (res < 0) {
             std.debug.print("Node set param failure {}\n", .{res});
             return error.SetParamFailed;
         }
+        return .seq(res);
     }
 };
 
@@ -597,6 +670,11 @@ pub const Properties = struct {
 pub const SPA = SimplePlugin;
 
 /// Known through out Pipewire as SPA, or Simple Plugin API.
+///
+/// SPA also has a way to encode asynchronous results. This is done by setting a high bit
+/// (bit 30, the ASYNC_BIT) in the result code and a sequence number in the lower bits.
+/// This result is normally identified as a positive success result code and the sequence
+/// number can later be matched to the completion event.
 pub const SimplePlugin = struct {
     pub const Dict = struct {
         flags: u32,
@@ -780,6 +858,7 @@ pub const SimplePlugin = struct {
         pub const Kind = union(Type) {
             none: void,
             bool: bool,
+            /// May be different from the global interface Id,
             id: u32,
             int: i32,
             long: i64,
@@ -1215,7 +1294,6 @@ pub const SimplePlugin = struct {
         };
 
         pub const Bitmap = void;
-        pub const Sequence = void;
         pub const Pointer = void;
 
         pub const Builder = struct {
@@ -1373,8 +1451,6 @@ pub const Direction = enum(c_uint) {
     input = c.PW_DIRECTION_INPUT,
     output = c.PW_DIRECTION_OUTPUT,
 };
-
-pub const Id = enum(u32) { core = 0, client = 1, any = std.math.maxInt(u32), _ };
 
 pub const Stream = struct {
     ptr: *c.pw_stream,
