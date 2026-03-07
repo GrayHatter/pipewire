@@ -1151,8 +1151,10 @@ pub const SimplePlugin = struct {
                 pub const LAST: Object.Type = @enumFromInt(262158);
             };
 
-            pub const Flags = enum(u32) {
-                _,
+            pub const Flags = packed struct(u32) {
+                _: u32 = 0,
+
+                pub const none: Flags = .{};
             };
 
             pub fn fromPod(pod: *const POD) Object {
@@ -1188,7 +1190,7 @@ pub const SimplePlugin = struct {
 
             pub fn next(obj: *Object) ?Result {
                 const key = obj.reader.takeEnum(Key, .native) catch return null;
-                const flags = obj.reader.takeEnumNonexhaustive(Flags, .native) catch unreachable;
+                const flags = obj.reader.takeStruct(Flags, .native) catch unreachable;
                 const value_size = obj.reader.takeInt(u32, .native) catch unreachable;
                 const value_type = obj.reader.takeEnumNonexhaustive(POD.Type, .native) catch unreachable;
                 defer while (obj.reader.seek % 8 != 0) {
@@ -1203,6 +1205,64 @@ pub const SimplePlugin = struct {
                     .value = Kind.init(value_type, value_size, &obj.reader) catch unreachable,
                 };
             }
+
+            pub const Builder = struct {
+                builder: *POD.Builder,
+                body: []align(8) u8,
+
+                pub fn append(obj: *Object.Builder, key: Key, flags: Flags, comptime kind: POD.Type, value: anytype) !void {
+                    var buffer: [256]u8 = undefined; // TODO size array correctly
+                    var writer: std.Io.Writer = .fixed(&buffer);
+                    const padding: u32 = 0;
+                    writer.writeInt(u32, @intFromEnum(key), .native) catch return error.NoSpaceLeft;
+                    writer.writeInt(u32, @bitCast(flags), .native) catch return error.NoSpaceLeft;
+                    switch (kind) {
+                        .id => {
+                            writer.writeInt(u32, 4, .native) catch return error.NoSpaceLeft; // size
+                            writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, @bitCast(value), .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, padding, .native) catch return error.NoSpaceLeft;
+                        },
+
+                        .int => {
+                            writer.writeInt(u32, 4, .native) catch return error.NoSpaceLeft; // size
+                            writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, @bitCast(value), .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, padding, .native) catch return error.NoSpaceLeft;
+                        },
+                        .array => {
+                            // TODO construct sane api instead of this monstrosity
+                            const child_type: POD.Type = value[0];
+                            const array: []const child_type.TypeFor() = value[1];
+                            const array_size: usize = (@sizeOf(child_type.TypeFor()) * array.len);
+
+                            writer.writeInt(u32, array_size + 8, .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, array_size, .native) catch return error.NoSpaceLeft;
+                            writer.writeInt(u32, @intFromEnum(child_type), .native) catch return error.NoSpaceLeft;
+
+                            for (array) |item|
+                                writer.writeAll(std.mem.asBytes(&item)) catch return error.NoSpaceLeft;
+
+                            for (array_size..array_size + 7 & ~@as(usize, 7)) |_|
+                                writer.writeByte(0) catch return error.NoSpaceLeft;
+                        },
+                        .object => unreachable, // TODO
+                        else => comptime unreachable, // not implemented,
+                        _ => comptime unreachable,
+                    }
+
+                    obj.body = try obj.builder.append(obj.body, writer.buffered());
+                }
+
+                pub fn toPwPod(obj: *Object.Builder) *c.spa_pod {
+                    return @ptrCast(obj.body);
+                }
+
+                pub fn toPwPodFrame(obj: *Object.Builder) *c.spa_pod_frame {
+                    return @ptrCast(obj.body);
+                }
+            };
         };
 
         pub const Array = struct {
@@ -1306,69 +1366,11 @@ pub const SimplePlugin = struct {
                 pub const none: Flags = .{};
             };
 
-            pub const ObjBuilder = struct {
-                builder: *Builder,
-                body: []align(8) u8,
-
-                pub fn append(obj: *ObjBuilder, key: Key, flags: Flags, comptime kind: POD.Type, value: anytype) !void {
-                    var buffer: [256]u8 = undefined; // TODO size array correctly
-                    var writer: std.Io.Writer = .fixed(&buffer);
-                    const padding: u32 = 0;
-                    writer.writeInt(u32, @intFromEnum(key), .native) catch return error.NoSpaceLeft;
-                    writer.writeInt(u32, @bitCast(flags), .native) catch return error.NoSpaceLeft;
-                    switch (kind) {
-                        .id => {
-                            writer.writeInt(u32, 4, .native) catch return error.NoSpaceLeft; // size
-                            writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, @bitCast(value), .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, padding, .native) catch return error.NoSpaceLeft;
-                        },
-
-                        .int => {
-                            writer.writeInt(u32, 4, .native) catch return error.NoSpaceLeft; // size
-                            writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, @bitCast(value), .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, padding, .native) catch return error.NoSpaceLeft;
-                        },
-                        .array => {
-                            // TODO construct sane api instead of this monstrosity
-                            const child_type: POD.Type = value[0];
-                            const array: []const child_type.TypeFor() = value[1];
-                            const array_size: usize = (@sizeOf(child_type.TypeFor()) * array.len);
-
-                            writer.writeInt(u32, array_size + 8, .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, array_size, .native) catch return error.NoSpaceLeft;
-                            writer.writeInt(u32, @intFromEnum(child_type), .native) catch return error.NoSpaceLeft;
-
-                            for (array) |item|
-                                writer.writeAll(std.mem.asBytes(&item)) catch return error.NoSpaceLeft;
-
-                            for (array_size..array_size + 7 & ~@as(usize, 7)) |_|
-                                writer.writeByte(0) catch return error.NoSpaceLeft;
-                        },
-                        .object => unreachable, // TODO
-                        else => comptime unreachable, // not implemented,
-                        _ => comptime unreachable,
-                    }
-
-                    obj.body = try obj.builder.append(obj.body, writer.buffered());
-                }
-
-                pub fn toPwPod(obj: *ObjBuilder) *c.spa_pod {
-                    return @ptrCast(obj.body);
-                }
-
-                pub fn toPwPodFrame(obj: *ObjBuilder) *c.spa_pod_frame {
-                    return @ptrCast(obj.body);
-                }
-            };
-
             pub fn init(buffer: []align(8) u8) Builder {
                 return .{ .bytes = buffer };
             }
 
-            pub fn pushObject(build: *Builder, obj_type: Object.Type, obj_id: Param.Id) error{NoSpaceLeft}!ObjBuilder {
+            pub fn pushObject(build: *Builder, obj_type: Object.Type, obj_id: Param.Id) error{NoSpaceLeft}!Object.Builder {
                 std.debug.assert(build.len % 8 == 0);
                 var body: []align(8) u8 = @alignCast(build.bytes[build.len..]);
                 const empty_size = 8;
