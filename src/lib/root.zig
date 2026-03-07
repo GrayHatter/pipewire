@@ -319,10 +319,12 @@ pub const Registry = struct {
 
         return switch (target) {
             .client => .{ .ptr = @ptrCast(bind_proxy) },
-            .port => .{ .ptr = @ptrCast(bind_proxy) },
             .device => .{ .ptr = @ptrCast(bind_proxy) },
-            .node => .{ .ptr = @ptrCast(bind_proxy) },
+            .factory => .{ .ptr = @ptrCast(bind_proxy) },
             .link => .{ .ptr = @ptrCast(bind_proxy) },
+            .module => .{ .ptr = @ptrCast(bind_proxy) },
+            .node => .{ .ptr = @ptrCast(bind_proxy) },
+            .port => .{ .ptr = @ptrCast(bind_proxy) },
             else => comptime unreachable, // not implemented,
         };
     }
@@ -530,6 +532,87 @@ pub const Device = struct {
             .info = if (func.info != null) &CFunc.info else null,
             .param = if (func.param != null) &CFunc.param else null,
         }, usrptr) != 0) return error.UnableToAddRegisteryListener;
+    }
+};
+
+pub const Factory = struct {
+    ptr: *c.pw_factory,
+
+    pub const Info = struct {
+        id: Id,
+        type: ?[:0]const u8,
+        version: u32,
+        change_mask: u64,
+    };
+
+    pub fn FactoryFn(T: type) type {
+        return struct {
+            info: ?*const fn (*T, Info) void = null,
+        };
+    }
+
+    pub fn addListener(dev: Factory, T: type, comptime func: FactoryFn(T), listener: *c.spa_hook, usrptr: *T) !void {
+        const CFunc = struct {
+            fn info(ptr: ?*anyopaque, fact_info: ?*const c.pw_factory_info) callconv(.c) void {
+                @call(.auto, func.info.?, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    Info{
+                        .id = @enumFromInt(fact_info.?.id),
+                        .type = if (fact_info.?.type) |typ| std.mem.span(typ) else null,
+                        .version = fact_info.?.version,
+                        .change_mask = fact_info.?.change_mask,
+                    },
+                });
+            }
+        };
+
+        if (c.pw_factory_add_listener(dev.ptr, listener, &.{
+            .version = c.PW_VERSION_FACTORY_EVENTS,
+            .info = if (func.info != null) &CFunc.info else null,
+        }, usrptr) != 0) return error.UnableToAddFactoryListener;
+    }
+};
+
+/// `Metadata` is an extension
+pub const Metadata = struct {
+    ptr: *c.pw_proxy,
+};
+
+pub const Module = struct {
+    ptr: *c.pw_module,
+
+    pub const Info = struct {
+        id: Id,
+        filename: ?[:0]const u8,
+        args: ?[:0]const u8,
+        change_mask: u64,
+    };
+
+    pub fn ModuleFn(T: type) type {
+        return struct {
+            info: ?*const fn (*T, Info) void = null,
+        };
+    }
+
+    pub fn addListener(dev: Module, T: type, comptime func: ModuleFn(T), listener: *c.spa_hook, usrptr: *T) !void {
+        const CFunc = struct {
+            fn info(ptr: ?*anyopaque, mod_info: ?*const c.pw_module_info) callconv(.c) void {
+                @call(.auto, func.info.?, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    Info{
+                        .id = @enumFromInt(mod_info.?.id),
+                        .filename = if (mod_info.?.filename) |fname| std.mem.span(fname) else null,
+                        .args = if (mod_info.?.args) |args| std.mem.span(args) else null,
+                        .change_mask = mod_info.?.change_mask,
+                    },
+                });
+            }
+        };
+
+        if (c.pw_module_add_listener(dev.ptr, listener, &.{
+            .version = c.PW_VERSION_MODULE_EVENTS,
+            .info = if (func.info != null) &CFunc.info else null,
+        }, usrptr) != 0) return error.UnableToAddModuleListener;
     }
 };
 
@@ -1550,17 +1633,11 @@ pub const DataLoop = void;
 /// Not yet implemented
 pub const DataSystem = void;
 /// Not yet implemented
-pub const Factory = void;
-/// Not yet implemented
 pub const Log = void;
 /// Not yet implemented
 pub const LoopControl = void;
 /// Not yet implemented
 pub const LoopUtils = void;
-/// Not yet implemented
-pub const Metadata = void;
-/// Not yet implemented
-pub const Module = void;
 /// Not yet implemented
 pub const Profiler = void;
 /// Not yet implemented
