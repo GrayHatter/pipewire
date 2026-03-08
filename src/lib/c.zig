@@ -19861,6 +19861,25 @@ pub const SPA_TYPE_INFO_Event = SPA_TYPE_INFO_OBJECT_BASE ++ "Event";
 pub const SPA_TYPE_INFO_EVENT_BASE = SPA_TYPE_INFO_Event ++ ":";
 pub const SPA_TYPE_INFO_Command = SPA_TYPE_INFO_OBJECT_BASE ++ "Command";
 pub const SPA_TYPE_INFO_COMMAND_BASE = SPA_TYPE_INFO_Command ++ ":";
+pub const PW_VERSION_METADATA_EVENTS: c_int = 0;
+
+pub const PW_METADATA_METHOD_ADD_LISTENER = 0;
+pub const PW_METADATA_METHOD_SET_PROPERTY = 1;
+pub const PW_METADATA_METHOD_CLEAR = 2;
+pub const PW_METADATA_METHOD_NUM = 3;
+pub const pw_metadata_events = extern struct {
+    version: u32,
+    property: *const fn (*anyopaque, u32, [*c]const u8, [*c]const u8, [*c]const u8) callconv(.c) c_int,
+};
+
+pub const PW_VERSION_METADATA_METHODS = 0;
+pub const pw_metadata_methods = extern struct {
+    version: u32,
+    add_listener: *const fn (*anyopaque, *spa_hook, *const pw_metadata_events, ?*anyopaque) callconv(.c) c_int,
+    set_property: *const fn (*anyopaque, u32, [*c]const u8, [*c]const u8, [*c]const u8) callconv(.c) c_int,
+    clear: *const fn (*anyopaque) callconv(.c) c_int,
+};
+
 pub const SPA_POD_ALIGN = @as(c_int, 8);
 pub const SPA_POD_MAX_SIZE = @as(c_uint, 1) << @as(c_int, 20);
 pub inline fn SPA_POD_BODY_SIZE(pod: anytype) @TypeOf(@import("std").zig.c_translation.cast([*c]struct_spa_pod, pod).*.size) {

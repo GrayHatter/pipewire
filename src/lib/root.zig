@@ -322,6 +322,7 @@ pub const Registry = struct {
             .device => .{ .ptr = @ptrCast(bind_proxy) },
             .factory => .{ .ptr = @ptrCast(bind_proxy) },
             .link => .{ .ptr = @ptrCast(bind_proxy) },
+            .metadata => .{ .ptr = @ptrCast(bind_proxy) },
             .module => .{ .ptr = @ptrCast(bind_proxy) },
             .node => .{ .ptr = @ptrCast(bind_proxy) },
             .port => .{ .ptr = @ptrCast(bind_proxy) },
@@ -551,7 +552,7 @@ pub const Factory = struct {
         };
     }
 
-    pub fn addListener(dev: Factory, T: type, comptime func: FactoryFn(T), listener: *c.spa_hook, usrptr: *T) !void {
+    pub fn addListener(fact: Factory, T: type, comptime func: FactoryFn(T), listener: *c.spa_hook, usrptr: *T) !void {
         const CFunc = struct {
             fn info(ptr: ?*anyopaque, fact_info: ?*const c.pw_factory_info) callconv(.c) void {
                 @call(.auto, func.info.?, .{
@@ -566,7 +567,7 @@ pub const Factory = struct {
             }
         };
 
-        if (c.pw_factory_add_listener(dev.ptr, listener, &.{
+        if (c.pw_factory_add_listener(fact.ptr, listener, &.{
             .version = c.PW_VERSION_FACTORY_EVENTS,
             .info = if (func.info != null) &CFunc.info else null,
         }, usrptr) != 0) return error.UnableToAddFactoryListener;
@@ -576,6 +577,39 @@ pub const Factory = struct {
 /// `Metadata` is an extension
 pub const Metadata = struct {
     ptr: *c.pw_proxy,
+
+    pub fn MetadataFn(T: type) type {
+        return struct {
+            property: ?*const fn (*T, Id, ?[:0]const u8, ?[:0]const u8, ?[:0]const u8) i32 = null,
+        };
+    }
+
+    pub fn addListener(meta: Metadata, T: type, comptime func: MetadataFn(T), listener: *c.spa_hook, usrptr: *T) !void {
+        const CFunc = struct {
+            fn property(ptr: ?*anyopaque, id: u32, key: ?[*:0]const u8, md_type: ?[*:0]const u8, value: ?[*:0]const u8) callconv(.c) c_int {
+                return @call(.auto, func.property.?, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))),
+                    Id.id(id),
+                    if (key) |k| std.mem.span(k) else null,
+                    if (md_type) |t| std.mem.span(t) else null,
+                    if (value) |v| std.mem.span(v) else null,
+                });
+            }
+        };
+
+        const iface: *c.spa_interface = @ptrCast(@alignCast(meta.ptr));
+        const callbacks: *const c.pw_metadata_methods = @ptrCast(@alignCast(iface.cb.funcs));
+        _ = callbacks.add_listener(iface.cb.data.?, listener, &.{
+            .version = c.PW_VERSION_METADATA_EVENTS,
+            .property = if (func.property != null) &CFunc.property else null,
+        }, usrptr);
+    }
+
+    pub fn setProperty(meta: Metadata, target: Id, key: [:0]const u8, md_type: [:0]const u8, value: [:0]const u8) !void {
+        const iface: *c.spa_interface = @ptrCast(@alignCast(meta.ptr));
+        const callbacks: *const c.pw_metadata_methods = @ptrCast(@alignCast(iface.cb.funcs));
+        _ = callbacks.set_property(iface.cb.data.?, @intFromEnum(target), key, md_type, value);
+    }
 };
 
 pub const Module = struct {
