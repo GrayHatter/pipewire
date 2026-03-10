@@ -261,6 +261,16 @@ pub const Context = struct {
 pub const Core = struct {
     ptr: *c.pw_core,
 
+    pub fn CoreFn(T: type) type {
+        return struct {
+            done: *const fn (ml_ptr: *T, id: u32, seq_: i32) callconv(.c) void,
+        };
+    }
+
+    pub fn raze(core: Core) void {
+        _ = c.pw_core_disconnect(core.ptr);
+    }
+
     pub fn sync(core: Core, id: Id, seq: i32) !Sequence {
         const res = c.pw_core_sync(core.ptr, @intFromEnum(id), seq);
         if (res < 0) return error.CoreSyncFailed;
@@ -273,8 +283,20 @@ pub const Core = struct {
         };
     }
 
-    pub fn raze(core: Core) void {
-        _ = c.pw_core_disconnect(core.ptr);
+    pub fn addListener(core: Core, T: type, comptime func: CoreFn(T), listener: *c.spa_hook, usrptr: *T) !void {
+        const CFunc = struct {
+            fn done(ptr: ?*anyopaque, id: u32, seq: i32) callconv(.c) void {
+                @call(.auto, func, .{
+                    @as(*T, @ptrCast(@alignCast(ptr))), @as(Id, @enumFromInt(id)),
+                    @as(Sequence, @enumFromInt(seq)),
+                });
+            }
+        };
+
+        if (c.pw_registry_add_listener(core.ptr, listener, &.{
+            .version = c.PW_VERSION_CORE_EVENTS,
+            .done = &CFunc.done,
+        }, usrptr) != 0) return error.UnableToAddCoreListener;
     }
 };
 
@@ -282,11 +304,13 @@ pub const Registry = struct {
     ptr: *c.pw_registry,
 
     /// use type void when the user ptr provided to pipewire is expected to be null
-    pub fn ListenerFn(T: type) type {
-        return *const fn (*T, Id, u32, ?Interface.Name, u32, SimplePlugin.Dict) void;
+    pub fn RegistryFn(T: type) type {
+        return struct {
+            global: *const fn (*T, Id, u32, ?Interface.Name, u32, SimplePlugin.Dict) void,
+        };
     }
 
-    pub fn addListener(reg: Registry, T: type, comptime func: ListenerFn(T), reg_listener: *c.spa_hook, usrptr: *T) !void {
+    pub fn addListener(reg: Registry, T: type, comptime func: RegistryFn(T), reg_listener: *c.spa_hook, usrptr: *T) !void {
         const CFunc = struct {
             fn wrapper(
                 ptr: ?*anyopaque,
@@ -296,7 +320,7 @@ pub const Registry = struct {
                 version: u32,
                 props: ?*const c.spa_dict,
             ) callconv(.c) void {
-                @call(.auto, func, .{
+                @call(.auto, func.global, .{
                     @as(*T, @ptrCast(@alignCast(ptr))),
                     @as(Id, @enumFromInt(id)),
                     permissions,
@@ -314,11 +338,13 @@ pub const Registry = struct {
     }
 
     pub fn bind(reg: Registry, comptime target: Interface.Name, id: Id, ver: u32, size: usize) !target.TypeFor() {
-        // TODO what is size?
+        // size is the extra space for user data that pw will alloc when creating the pw_proxy
+        // TODO should we use that space for the spa_hook?
         const bind_proxy = c.pw_registry_bind(reg.ptr, @intFromEnum(id), target.toStr(), ver, size) orelse return error.UnableToBindToRegistry;
 
         return switch (target) {
             .client => .{ .ptr = @ptrCast(bind_proxy) },
+            .core => .{ .ptr = @ptrCast(bind_proxy) },
             .device => .{ .ptr = @ptrCast(bind_proxy) },
             .factory => .{ .ptr = @ptrCast(bind_proxy) },
             .link => .{ .ptr = @ptrCast(bind_proxy) },
@@ -1219,6 +1245,10 @@ pub const SimplePlugin = struct {
             START_Other = 524288,
             params = 524289,
             START_CUSTOM = 16777216,
+
+            pub fn fromKey(k: Key) Prop {
+                return @enumFromInt(@intFromEnum(k));
+            }
         };
 
         pub const Latency = enum(u32) {
