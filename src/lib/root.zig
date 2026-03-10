@@ -1381,7 +1381,7 @@ pub const SimplePlugin = struct {
                             // TODO construct sane api instead of this monstrosity
                             const child_type: POD.Type = value[0];
                             const array: []const child_type.TypeFor() = value[1];
-                            const array_size: usize = (@sizeOf(child_type.TypeFor()) * array.len);
+                            const array_size: u32 = @intCast(@sizeOf(child_type.TypeFor()) * array.len);
 
                             writer.writeInt(u32, array_size + 8, .native) catch return error.NoSpaceLeft;
                             writer.writeInt(u32, @intFromEnum(kind), .native) catch return error.NoSpaceLeft;
