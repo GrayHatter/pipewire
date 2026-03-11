@@ -228,6 +228,10 @@ pub const MainLoop = struct {
             .ptr = c.pw_main_loop_get_loop(ml.ptr) orelse return error.UnableToGetLoop,
         };
     }
+
+    pub fn getThreaded(ml: MainLoop, name: [:0]const u8, props: anytype) !ThreadLoop {
+        return try .full(try ml.getLoop(), name, props);
+    }
 };
 
 pub const Loop = struct {
@@ -235,6 +239,53 @@ pub const Loop = struct {
 
     pub fn newContext(loop: Loop) !Context {
         return try .init(loop);
+    }
+};
+
+pub const ThreadLoop = struct {
+    ptr: *c.pw_thread_loop,
+
+    pub fn init(name: [:0]const u8, props: anytype) !ThreadLoop {
+        if (c.pw_thread_loop_new(name, props)) |loop| {
+            return .{ .ptr = loop };
+        } else return error.FailedToCreateThreadedLoop;
+    }
+
+    /// Destroy an existing `ThreadLoop`
+    pub fn raze(tl: ThreadLoop) void {
+        c.pw_thread_loop_destroy(tl.ptr);
+    }
+
+    /// Create a threaded loop from an existing loop
+    pub fn full(loop: Loop, name: [:0]const u8, props: anytype) !ThreadLoop {
+        if (c.pw_thread_loop_new_full(loop.ptr, name, props)) |threaded| {
+            return .{ .ptr = threaded };
+        } else return error.FailedToCreateThreadedLoop;
+    }
+
+    /// Start the `ThreadLoop`
+    pub fn start(tl: ThreadLoop) void {
+        c.pw_thread_loop_start(tl.ptr);
+    }
+
+    /// Stop the `ThreadLoop`
+    pub fn stop(tl: ThreadLoop) void {
+        c.pw_thread_loop_stop(tl.ptr);
+    }
+
+    /// Locks using the pipewire utilities. Is a recursive lock and can be called multiple times
+    pub fn lock(tl: ThreadLoop) void {
+        c.pw_thread_loop_lock(tl.ptr);
+    }
+
+    pub fn unlock(tl: ThreadLoop) void {
+        c.pw_thread_loop_unlock(tl.ptr);
+    }
+
+    pub fn getLoop(tl: ThreadLoop) !Loop {
+        return .{
+            .ptr = c.pw_thread_loop_get_loop(tl.ptr) orelse return error.UnableToGetLoop,
+        };
     }
 };
 
