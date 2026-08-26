@@ -1297,6 +1297,8 @@ pub const SimplePlugin = struct {
             params = 524289,
             START_CUSTOM = 16777216,
 
+            _,
+
             pub fn fromKey(k: Key) Prop {
                 return @enumFromInt(@intFromEnum(k));
             }
