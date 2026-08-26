@@ -676,10 +676,11 @@ pub const Metadata = struct {
 
         const iface: *c.spa_interface = @ptrCast(@alignCast(meta.ptr));
         const callbacks: *const c.pw_metadata_methods = @ptrCast(@alignCast(iface.cb.funcs));
-        _ = callbacks.add_listener(iface.cb.data.?, listener, &.{
-            .version = c.PW_VERSION_METADATA_EVENTS,
-            .property = if (func.property != null) &CFunc.property else null,
-        }, usrptr);
+        if (callbacks.add_listener) |add_listener|
+            _ = add_listener(iface.cb.data.?, listener, &.{
+                .version = c.PW_VERSION_METADATA_EVENTS,
+                .property = if (func.property != null) &CFunc.property else null,
+            }, usrptr);
     }
 
     pub fn setProperty(meta: Metadata, target: Id, key: [:0]const u8, md_type: [:0]const u8, value: [:0]const u8) !void {
