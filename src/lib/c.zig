@@ -20,6 +20,7 @@
 //!     @cInclude("spa/debug/format.h");
 //!     @cInclude("spa/debug/pod.h");
 //!     @cInclude("pipewire/pipewire.h");
+//!     @cInclude("pipewire/extensions/metadata.h");
 //! });
 //! ```
 pub const __builtin_bswap16 = @import("std").zig.c_translation.builtins.bswap16;
@@ -17713,6 +17714,88 @@ pub extern fn pw_get_domain() [*c]const u8;
 pub extern fn pw_get_support(support: [*c]struct_spa_support, max_support: u32) u32;
 pub extern fn pw_load_spa_handle(lib: [*c]const u8, factory_name: [*c]const u8, info: [*c]const struct_spa_dict, n_support: u32, support: [*c]const struct_spa_support) [*c]struct_spa_handle;
 pub extern fn pw_unload_spa_handle(handle: [*c]struct_spa_handle) c_int;
+pub const struct_pw_metadata = opaque {};
+pub const struct_pw_metadata_events = extern struct {
+    version: u32 = @import("std").mem.zeroes(u32),
+    property: ?*const fn (?*anyopaque, u32, [*c]const u8, [*c]const u8, [*c]const u8) callconv(.c) c_int = @import("std").mem.zeroes(?*const fn (?*anyopaque, u32, [*c]const u8, [*c]const u8, [*c]const u8) callconv(.c) c_int),
+};
+pub const struct_pw_metadata_methods = extern struct {
+    version: u32 = @import("std").mem.zeroes(u32),
+    add_listener: ?*const fn (?*anyopaque, [*c]struct_spa_hook, [*c]const struct_pw_metadata_events, ?*anyopaque) callconv(.c) c_int = @import("std").mem.zeroes(?*const fn (?*anyopaque, [*c]struct_spa_hook, [*c]const struct_pw_metadata_events, ?*anyopaque) callconv(.c) c_int),
+    set_property: ?*const fn (?*anyopaque, u32, [*c]const u8, [*c]const u8, [*c]const u8) callconv(.c) c_int = @import("std").mem.zeroes(?*const fn (?*anyopaque, u32, [*c]const u8, [*c]const u8, [*c]const u8) callconv(.c) c_int),
+    clear: ?*const fn (?*anyopaque) callconv(.c) c_int = @import("std").mem.zeroes(?*const fn (?*anyopaque) callconv(.c) c_int),
+};
+pub fn pw_metadata_add_listener(arg_object: ?*struct_pw_metadata, arg_listener: [*c]struct_spa_hook, arg_events: [*c]const struct_pw_metadata_events, arg_data: ?*anyopaque) callconv(.c) c_int {
+    var object = arg_object;
+    _ = &object;
+    var listener = arg_listener;
+    _ = &listener;
+    var events = arg_events;
+    _ = &events;
+    var data = arg_data;
+    _ = &data;
+    return blk: {
+        var _res: c_int = -@as(c_int, 95);
+        _ = &_res;
+        var _i: [*c]struct_spa_interface = @as([*c]struct_spa_interface, @ptrCast(@alignCast(object)));
+        _ = &_i;
+        {
+            var _f: [*c]const struct_pw_metadata_methods = @as([*c]const struct_pw_metadata_methods, @ptrCast(@alignCast((&_i.*.cb).*.funcs)));
+            _ = &_f;
+            if (__builtin_expect(@as(c_long, @intFromBool(!!(((_f != null) and ((@as(c_int, 0) == @as(c_int, 0)) or (_f.*.version > @as(u32, @bitCast(@as(c_int, 0) - @as(c_int, 1)))))) and (_f.*.add_listener != null)))), @as(c_long, @bitCast(@as(c_long, @as(c_int, 1))))) != 0) {
+                _res = _f.*.add_listener.?((&_i.*.cb).*.data, listener, events, data);
+            }
+            _ = &_res;
+        }
+        break :blk _res;
+    };
+}
+pub fn pw_metadata_set_property(arg_object: ?*struct_pw_metadata, arg_subject: u32, arg_key: [*c]const u8, arg_type: [*c]const u8, arg_value: [*c]const u8) callconv(.c) c_int {
+    var object = arg_object;
+    _ = &object;
+    var subject = arg_subject;
+    _ = &subject;
+    var key = arg_key;
+    _ = &key;
+    var @"type" = arg_type;
+    _ = &@"type";
+    var value = arg_value;
+    _ = &value;
+    return blk: {
+        var _res: c_int = -@as(c_int, 95);
+        _ = &_res;
+        var _i: [*c]struct_spa_interface = @as([*c]struct_spa_interface, @ptrCast(@alignCast(object)));
+        _ = &_i;
+        {
+            var _f: [*c]const struct_pw_metadata_methods = @as([*c]const struct_pw_metadata_methods, @ptrCast(@alignCast((&_i.*.cb).*.funcs)));
+            _ = &_f;
+            if (__builtin_expect(@as(c_long, @intFromBool(!!(((_f != null) and ((@as(c_int, 0) == @as(c_int, 0)) or (_f.*.version > @as(u32, @bitCast(@as(c_int, 0) - @as(c_int, 1)))))) and (_f.*.set_property != null)))), @as(c_long, @bitCast(@as(c_long, @as(c_int, 1))))) != 0) {
+                _res = _f.*.set_property.?((&_i.*.cb).*.data, subject, key, @"type", value);
+            }
+            _ = &_res;
+        }
+        break :blk _res;
+    };
+}
+pub fn pw_metadata_clear(arg_object: ?*struct_pw_metadata) callconv(.c) c_int {
+    var object = arg_object;
+    _ = &object;
+    return blk: {
+        var _res: c_int = -@as(c_int, 95);
+        _ = &_res;
+        var _i: [*c]struct_spa_interface = @as([*c]struct_spa_interface, @ptrCast(@alignCast(object)));
+        _ = &_i;
+        {
+            var _f: [*c]const struct_pw_metadata_methods = @as([*c]const struct_pw_metadata_methods, @ptrCast(@alignCast((&_i.*.cb).*.funcs)));
+            _ = &_f;
+            if (__builtin_expect(@as(c_long, @intFromBool(!!(((_f != null) and ((@as(c_int, 0) == @as(c_int, 0)) or (_f.*.version > @as(u32, @bitCast(@as(c_int, 0) - @as(c_int, 1)))))) and (_f.*.clear != null)))), @as(c_long, @bitCast(@as(c_long, @as(c_int, 1))))) != 0) {
+                _res = _f.*.clear.?((&_i.*.cb).*.data);
+            }
+            _ = &_res;
+        }
+        break :blk _res;
+    };
+}
 pub const __llvm__ = @as(c_int, 1);
 pub const __clang__ = @as(c_int, 1);
 pub const __clang_major__ = @as(c_int, 20);
@@ -19861,24 +19944,6 @@ pub const SPA_TYPE_INFO_Event = SPA_TYPE_INFO_OBJECT_BASE ++ "Event";
 pub const SPA_TYPE_INFO_EVENT_BASE = SPA_TYPE_INFO_Event ++ ":";
 pub const SPA_TYPE_INFO_Command = SPA_TYPE_INFO_OBJECT_BASE ++ "Command";
 pub const SPA_TYPE_INFO_COMMAND_BASE = SPA_TYPE_INFO_Command ++ ":";
-pub const PW_VERSION_METADATA_EVENTS: c_int = 0;
-
-pub const PW_METADATA_METHOD_ADD_LISTENER = 0;
-pub const PW_METADATA_METHOD_SET_PROPERTY = 1;
-pub const PW_METADATA_METHOD_CLEAR = 2;
-pub const PW_METADATA_METHOD_NUM = 3;
-pub const pw_metadata_events = extern struct {
-    version: u32,
-    property: *const fn (*anyopaque, u32, [*c]const u8, [*c]const u8, [*c]const u8) callconv(.c) c_int,
-};
-
-pub const PW_VERSION_METADATA_METHODS = 0;
-pub const pw_metadata_methods = extern struct {
-    version: u32,
-    add_listener: *const fn (*anyopaque, *spa_hook, *const pw_metadata_events, ?*anyopaque) callconv(.c) c_int,
-    set_property: *const fn (*anyopaque, u32, [*c]const u8, [*c]const u8, [*c]const u8) callconv(.c) c_int,
-    clear: *const fn (*anyopaque) callconv(.c) c_int,
-};
 
 pub const SPA_POD_ALIGN = @as(c_int, 8);
 pub const SPA_POD_MAX_SIZE = @as(c_uint, 1) << @as(c_int, 20);
@@ -23006,6 +23071,22 @@ pub inline fn PW_CHECK_VERSION(major: anytype, minor: anytype, micro: anytype) @
     _ = &micro;
     return ((PW_MAJOR > major) or ((PW_MAJOR == major) and (PW_MINOR > minor))) or (((PW_MAJOR == major) and (PW_MINOR == minor)) and (PW_MICRO >= micro));
 }
+pub const PIPEWIRE_EXT_METADATA_H = "";
+pub const PW_TYPE_INTERFACE_Metadata = PW_TYPE_INFO_INTERFACE_BASE ++ "Metadata";
+pub const PW_METADATA_PERM_MASK = PW_PERM_RWX;
+pub const PW_VERSION_METADATA = @as(c_int, 3);
+pub const PW_API_METADATA_IMPL = @compileError("unable to translate C expr: unexpected token 'static'");
+pub const PW_EXTENSION_MODULE_METADATA = @compileError("unable to translate macro: undefined identifier `PIPEWIRE_MODULE_PREFIX`");
+pub const PW_METADATA_EVENT_PROPERTY = @as(c_int, 0);
+pub const PW_METADATA_EVENT_NUM = @as(c_int, 1);
+pub const PW_VERSION_METADATA_EVENTS = @as(c_int, 0);
+pub const PW_METADATA_METHOD_ADD_LISTENER = @as(c_int, 0);
+pub const PW_METADATA_METHOD_SET_PROPERTY = @as(c_int, 1);
+pub const PW_METADATA_METHOD_CLEAR = @as(c_int, 2);
+pub const PW_METADATA_METHOD_NUM = @as(c_int, 3);
+pub const PW_VERSION_METADATA_METHODS = @as(c_int, 0);
+pub const PW_KEY_METADATA_NAME = "metadata.name";
+pub const PW_KEY_METADATA_VALUES = "metadata.values";
 pub const timespec = struct_timespec;
 pub const sigval = union_sigval;
 pub const sigevent = struct_sigevent;
@@ -23313,3 +23394,6 @@ pub const spa_thread_utils = struct_spa_thread_utils;
 pub const spa_thread_utils_methods = struct_spa_thread_utils_methods;
 pub const pw_data_loop_events = struct_pw_data_loop_events;
 pub const pw_timer = struct_pw_timer;
+pub const pw_metadata = struct_pw_metadata;
+pub const pw_metadata_events = struct_pw_metadata_events;
+pub const pw_metadata_methods = struct_pw_metadata_methods;
